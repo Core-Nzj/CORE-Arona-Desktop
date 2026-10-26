@@ -9,7 +9,7 @@ contextBridge.exposeInMainWorld('aronaDesktop', Object.freeze({
   quit: () => ipcRenderer.send('avatar:quit'),
   showMenu: () => ipcRenderer.send('avatar:menu'),
   moveBy: (dx, dy) => ipcRenderer.send('avatar:move-by', dx, dy),
-  setClickThrough: (enabled) => ipcRenderer.send('avatar:click-through', enabled),
+  setAvatarRegion: (rect) => ipcRenderer.send('avatar:set-region', rect),
   onZoom: callback => ipcRenderer.on('avatar:zoom', (_event, action) => callback(action)),
   onModelChanged: callback => ipcRenderer.on('avatar:model-changed', (_event, model) => callback(model))
 }));
