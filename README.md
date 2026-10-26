@@ -118,12 +118,12 @@ Windowsでアプリを終了後 `git pull` と `npm start`。キャラの右ク�
 
 ## Phase 2-3: VoiSona Talk（ローカル音声）
 
-Electronアプリ側に、既存の `VoiSona Talk Proxy` と直接接続する音声エンジンを追加しました。Chrome拡張は現時点では変更しません。VoiSona製品・音声データ・認証情報は同梱もGit登録もしません。
+Electronアプリ側に `VoiSona Talk Proxy` と直接接続する音声エンジンを追加しました。Chrome拡張とは独立した機能であり、拡張機能の起動・停止・連携は必要ありません。VoiSona製品・音声データ・認証情報は同梱もGit登録もしません。
 
 ### 準備
 
 1. 購入済みのVoiSona Talkを起動し、設定からREST APIを有効にします（標準127.0.0.1:32766）。
-2. 以前のChrome読み上げで使用したProxyを **127.0.0.1:32777** で起動します。例：
+2. Proxyを **127.0.0.1:32777** で起動します。例：
    `py -m voisona_talk_proxy --host 127.0.0.1 --port 32777`
 3. Proxy側のVoiSona Talk認証設定は既存環境のものを使います。認証が必要ならProxyの起動オプションまたは環境変数で設定します。アプリ本体はパスワードを保存しません。
 4. `git pull`、`npm start` でデスクトップアバターを起動します。
@@ -146,6 +146,18 @@ Electronアプリ側に、既存の `VoiSona Talk Proxy` と直接接続する�
 
 ### 現在の範囲
 
-**まずデスクトップ単体での音声合成・再生を確認する段階**です。既存の `CORE VoiSona Reader`（Chrome拡張）からChatGPT回答を転送して自動発話する連携と、口パクは未実装です。既存Chrome拡張の読み上げを有効のまま使用すると、将来の連携では音声重複に注意が必要です。
+**まずデスクトップ単体での音声合成・再生を確認する段階**です。外部テキストの受信と口パクは未実装です。Chrome拡張とは独立して動作します。
 
 参照資料：VoiSona Talk Proxy https://pypi.org/project/voisona-talk-proxy/ ・ VoiSona Talk公式REST API https://manual.voisona.com/ja/talk/pc/2b6e9bc7efb180ea86ccc6c7347e9ca6
+
+### 2026-10-27: WAV再生互換性修正
+
+Proxy接続と音声ライブラリの取得は成功する一方、WindowsのElectronで「Failed to load because no supported source was found.」となる事例がありました。
+
+- 発話WAVのヘッダーを読み取り、対応するPCM 8/16/24/32bit、IEEE float 32/64bit、WAVEFORMATEXTENSIBLE形式を、標準16-bit PCM WAVに正規化します。
+- `<audio>`とBlob URLでWAVを読み込む実装を廃止し、変換した16-bit PCMをWeb AudioのAudioBufferに直接転送します。
+- サポート外のWAV形式は、無言の再生失敗ではなく、形式番号とビット深度を含む診断エラーとして報告します。
+- 右クリック → 「音声（VoiSona Talk）」 → 「音声診断」で入力WAV形式と再生状態を確認できます。
+- 接続先は従来どおり `127.0.0.1:32777`。Chrome拡張との連携や共存調整は行っていません。
+
+この修正はコード上のフォーマット変換・静的チェックを伴いますが、Windows上の実発話は先生の実機で再検証してください。
