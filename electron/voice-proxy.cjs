@@ -3,6 +3,7 @@
 // Local VoiSona Talk Proxy adapter. No VoiSona binaries, keys or WAVs are bundled.
 // This adapter never accepts URLs from the renderer; it talks only to localhost.
 const PROXY_ORIGIN = 'http://127.0.0.1:32777';
+const { normalizeSpeechWav } = require('./wav-normalizer.cjs');
 const MAX_WAV_BYTES = 16 * 1024 * 1024;
 
 class VoiceProxyError extends Error {
@@ -36,6 +37,7 @@ class VoiceProxyClient {
   constructor(fetchImpl = globalThis.fetch) {
     if (typeof fetchImpl !== 'function') throw new TypeError('fetch is required');
     this.fetchImpl = fetchImpl;
+    this.lastWavInfo = 'WAVはまだ生成されていません';
   }
 
   async listVoices() {
@@ -102,7 +104,9 @@ class VoiceProxyClient {
         data.toString('ascii', 8, 12) !== 'WAVE') {
       throw new VoiceProxyError('Proxyから正しいWAV音声が返されませんでした');
     }
-    return data;
+    const normalized = normalizeSpeechWav(data);
+    this.lastWavInfo = normalized.detail;
+    return normalized.buffer;
   }
 }
 
