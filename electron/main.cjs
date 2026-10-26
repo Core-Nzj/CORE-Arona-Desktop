@@ -1,6 +1,6 @@
 'use strict';
 
-const { app, BrowserWindow, dialog, ipcMain, Menu, protocol } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, Menu, protocol, screen } = require('electron');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { resolveAssetPath } = require('./asset-path.cjs');
@@ -32,6 +32,8 @@ protocol.registerSchemesAsPrivileged([{
 
 let mainWindow;
 let currentModelFile = null;
+let dragTimer = null;
+let dragStart = null;
 
 function infoForCurrentModel() {
   if (!currentModelFile) return null;
@@ -115,24 +117,63 @@ function isOurWindow(event) {
   return mainWindow && !mainWindow.isDestroyed() && event.sender === mainWindow.webContents;
 }
 
-function setAvatarRegion(rect) {
+function setAvatarRegion(rects) {
   if (!mainWindow || mainWindow.isDestroyed()) return;
-  if (rect === null) {
+  if (rects === null) {
     mainWindow.setShape([]);
     return;
   }
+  if (!Array.isArray(rects) || rects.length < 1 || rects.length > 2000) return;
 
-  const values = [rect?.x, rect?.y, rect?.width, rect?.height];
-  if (!values.every(Number.isFinite)) return;
   const [windowWidth, windowHeight] = mainWindow.getContentSize();
-  const x = Math.max(0, Math.min(windowWidth - 1, Math.floor(rect.x)));
-  const y = Math.max(0, Math.min(windowHeight - 1, Math.floor(rect.y)));
-  const width = Math.max(1, Math.min(windowWidth - x, Math.ceil(rect.width)));
-  const height = Math.max(1, Math.min(windowHeight - y, Math.ceil(rect.height)));
+  const checked = [];
+  for (const rect of rects) {
+    const values = [rect?.x, rect?.y, rect?.width, rect?.height];
+    if (!values.every(Number.isFinite)) return;
+    const x = Math.max(0, Math.min(windowWidth, Math.floor(rect.x)));
+    const y = Math.max(0, Math.min(windowHeight, Math.floor(rect.y)));
+    const width = Math.max(0, Math.min(windowWidth - x, Math.ceil(rect.width)));
+    const height = Math.max(0, Math.min(windowHeight - y, Math.ceil(rect.height)));
+    if (width && height) checked.push({ x, y, width, height });
+  }
+  if (checked.length) mainWindow.setShape(checked);
+}
 
-  // Windows hit testing now occurs in the OS. Outside this rectangle,
-  // clicks go to other apps while the avatar still receives input.
-  mainWindow.setShape([{ x, y, width, height }]);
+function stopAvatarDrag() {
+  if (dragTimer !== null) {
+    clearInterval(dragTimer);
+    dragTimer = null;
+  }
+  dragStart = null;
+}
+
+function startAvatarDrag() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  stopAvatarDrag();
+  dragStart = {
+    pointer: screen.getCursorScreenPoint(),
+    position: mainWindow.getPosition(),
+    startedAt: Date.now()
+  };
+
+  // The cursor position is absolute (DIP). Unlike DOM mousemove deltas,
+  // it stays stable while the frameless window itself is moving.
+  dragTimer = setInterval(() => {
+    if (!mainWindow || mainWindow.isDestroyed() || !dragStart) {
+      stopAvatarDrag();
+      return;
+    }
+    // Safety timeout if the mouseup event was lost.
+    if (Date.now() - dragStart.startedAt > 30_000) {
+      stopAvatarDrag();
+      return;
+    }
+    const pointer = screen.getCursorScreenPoint();
+    const x = Math.round(dragStart.position[0] + pointer.x - dragStart.pointer.x);
+    const y = Math.round(dragStart.position[1] + pointer.y - dragStart.pointer.y);
+    const [oldX, oldY] = mainWindow.getPosition();
+    if (x !== oldX || y !== oldY) mainWindow.setPosition(x, y);
+  }, 16);
 }
 
 function showAvatarMenu() {
@@ -164,6 +205,7 @@ function showAvatarMenu() {
     { type: 'separator' },
     { label: '終了', click: () => app.quit() }
   ]);
+  stopAvatarDrag();
   menu.popup({ window: mainWindow });
 }
 
@@ -194,7 +236,7 @@ function createWindow() {
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   mainWindow.webContents.on('will-navigate', event => event.preventDefault());
   mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
-  mainWindow.on('closed', () => { mainWindow = null; });
+  mainWindow.on('closed', () => { stopAvatarDrag(); mainWindow = null; });
 }
 
 app.whenReady().then(async () => {
@@ -212,12 +254,11 @@ app.whenReady().then(async () => {
   ipcMain.on('avatar:set-region', (event, rect) => {
     if (isOurWindow(event)) setAvatarRegion(rect);
   });
-  ipcMain.on('avatar:move-by', (event, dx, dy) => {
-    if (!isOurWindow(event) || !Number.isFinite(dx) || !Number.isFinite(dy)) return;
-    // A renderer may request only incremental movement, not arbitrary coordinates.
-    if (Math.abs(dx) > 100 || Math.abs(dy) > 100) return;
-    const [x, y] = mainWindow.getPosition();
-    mainWindow.setPosition(Math.round(x + dx), Math.round(y + dy));
+  ipcMain.on('avatar:drag-start', event => {
+    if (isOurWindow(event)) startAvatarDrag();
+  });
+  ipcMain.on('avatar:drag-stop', event => {
+    if (isOurWindow(event)) stopAvatarDrag();
   });
   ipcMain.on('avatar:quit', event => {
     if (mainWindow && event.sender === mainWindow.webContents) app.quit();
