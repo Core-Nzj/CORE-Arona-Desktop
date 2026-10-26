@@ -268,15 +268,17 @@ function showAvatarMenu() {
     {
       label: '使用する音声',
       enabled: voiceEntries.length > 0,
-      submenu: voiceEntries.map(voice => ({
-        label: voice.voice_name,
-        type: 'radio',
-        checked: selectedVoiceName === voice.voice_name,
-        click: () => {
-          selectedVoiceName = voice.voice_name;
-          void saveModelSelection();
-        }
-      }))
+      submenu: voiceEntries.length
+        ? voiceEntries.map(voice => ({
+          label: voice.voice_name,
+          type: 'radio',
+          checked: selectedVoiceName === voice.voice_name,
+          click: () => {
+            selectedVoiceName = voice.voice_name;
+            void saveModelSelection();
+          }
+        }))
+        : [{ label: '音声ライブラリなし', enabled: false }]
     },
     { type: 'separator' },
     {
