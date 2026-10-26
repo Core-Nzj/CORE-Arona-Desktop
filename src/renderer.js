@@ -2,6 +2,7 @@ import './style.css';
 import { rectanglesFromAlpha } from './silhouette.mjs';
 import { buildIdleVmd, IDLE_FRAMES } from './idle-vmd.mjs';
 import { EmotionController } from './emotions.mjs';
+import { makeWebAudioBuffer } from './pcm-playback.mjs';
 import { Engine } from '@babylonjs/core/Engines/engine';
 import { Scene } from '@babylonjs/core/scene';
 import { ArcRotateCamera } from '@babylonjs/core/Cameras/arcRotateCamera';
@@ -70,20 +71,22 @@ let isSeekingIdleLoop = false;
 let idleInfo = '待機モーションの読込待ち';
 let observedFrameTime = 0;
 let idlePlaybackCheckTimer = null;
-let activeSpeechAudio = null;
-let activeSpeechUrl = null;
+let activeSpeechSource = null;
+let activeSpeechContext = null;
 let speechGeneration = 0;
 
 function disposeSpeechAudio() {
-  if (activeSpeechAudio) {
-    activeSpeechAudio.pause();
-    activeSpeechAudio.removeAttribute('src');
-    activeSpeechAudio.load();
-    activeSpeechAudio = null;
+  const source = activeSpeechSource;
+  activeSpeechSource = null;
+  if (source) {
+    source.onended = null;
+    try { source.stop(); } catch { /* finished already */ }
+    source.disconnect();
   }
-  if (activeSpeechUrl) {
-    URL.revokeObjectURL(activeSpeechUrl);
-    activeSpeechUrl = null;
+  const context = activeSpeechContext;
+  activeSpeechContext = null;
+  if (context && context.state !== 'closed') {
+    void context.close().catch(error => console.warn('AudioContext close failed', error));
   }
 }
 
@@ -101,27 +104,28 @@ async function speakLatest(text) {
     const speech = await window.aronaDesktop.synthesizeSpeech(text);
     if (generation !== speechGeneration) return;
 
+    // The main process has converted any supported source WAV into standard
+    // 16-bit PCM. Populate the Web Audio buffer directly: no Blob URL, <audio>
+    // element, browser WAV codec detection or media source loading required.
     const raw = atob(speech.wavBase64);
     const bytes = Uint8Array.from(raw, char => char.charCodeAt(0));
-    const blob = new Blob([bytes], { type: 'audio/wav' });
-    const url = URL.createObjectURL(blob);
-    activeSpeechUrl = url;
-    const audio = new Audio(url);
-    activeSpeechAudio = audio;
-    audio.addEventListener('ended', () => {
-      if (generation !== speechGeneration) return;
+    const context = new AudioContext({ latencyHint: 'interactive' });
+    activeSpeechContext = context;
+    const audioBuffer = makeWebAudioBuffer(context, bytes);
+    await context.resume();
+    if (generation !== speechGeneration) return;
+
+    const source = context.createBufferSource();
+    source.buffer = audioBuffer;
+    source.connect(context.destination);
+    activeSpeechSource = source;
+    source.onended = () => {
+      if (generation !== speechGeneration || activeSpeechSource !== source) return;
       disposeSpeechAudio();
       window.aronaDesktop.reportVoicePlayback('再生完了');
-    }, { once: true });
-    audio.addEventListener('error', () => {
-      if (generation !== speechGeneration) return;
-      window.aronaDesktop.reportVoicePlayback('WAV再生エラー');
-      disposeSpeechAudio();
-    }, { once: true });
-    await audio.play();
-    if (generation === speechGeneration) {
-      window.aronaDesktop.reportVoicePlayback('再生中: ' + speech.voiceName);
-    }
+    };
+    source.start();
+    window.aronaDesktop.reportVoicePlayback('Web Audio再生中: ' + speech.voiceName);
   } catch (error) {
     if (generation !== speechGeneration) return;
     disposeSpeechAudio();
