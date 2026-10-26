@@ -1,0 +1,19 @@
+node_modules/
+dist/
+*.log
+.DS_Store
+.vscode/
+.env
+.env.*
+!.env.example
+# User-owned, potentially restricted MMD assets must never be committed.
+models/
+assets/private/
+*.pmx
+*.pmd
+*.vmd
+*.vpd
+*.vrm
+*.bpmx
+*.spa
+*.sph
