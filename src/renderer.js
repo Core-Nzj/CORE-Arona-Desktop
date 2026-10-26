@@ -70,6 +70,66 @@ let isSeekingIdleLoop = false;
 let idleInfo = '待機モーションの読込待ち';
 let observedFrameTime = 0;
 let idlePlaybackCheckTimer = null;
+let activeSpeechAudio = null;
+let activeSpeechUrl = null;
+let speechGeneration = 0;
+
+function disposeSpeechAudio() {
+  if (activeSpeechAudio) {
+    activeSpeechAudio.pause();
+    activeSpeechAudio.removeAttribute('src');
+    activeSpeechAudio.load();
+    activeSpeechAudio = null;
+  }
+  if (activeSpeechUrl) {
+    URL.revokeObjectURL(activeSpeechUrl);
+    activeSpeechUrl = null;
+  }
+}
+
+function stopSpeech() {
+  speechGeneration++;
+  window.aronaDesktop.cancelVoice();
+  disposeSpeechAudio();
+}
+
+async function speakLatest(text) {
+  stopSpeech();
+  const generation = speechGeneration;
+  window.aronaDesktop.reportVoicePlayback('WAV合成中');
+  try {
+    const speech = await window.aronaDesktop.synthesizeSpeech(text);
+    if (generation !== speechGeneration) return;
+
+    const raw = atob(speech.wavBase64);
+    const bytes = Uint8Array.from(raw, char => char.charCodeAt(0));
+    const blob = new Blob([bytes], { type: 'audio/wav' });
+    const url = URL.createObjectURL(blob);
+    activeSpeechUrl = url;
+    const audio = new Audio(url);
+    activeSpeechAudio = audio;
+    audio.addEventListener('ended', () => {
+      if (generation !== speechGeneration) return;
+      disposeSpeechAudio();
+      window.aronaDesktop.reportVoicePlayback('再生完了');
+    }, { once: true });
+    audio.addEventListener('error', () => {
+      if (generation !== speechGeneration) return;
+      window.aronaDesktop.reportVoicePlayback('WAV再生エラー');
+      disposeSpeechAudio();
+    }, { once: true });
+    await audio.play();
+    if (generation === speechGeneration) {
+      window.aronaDesktop.reportVoicePlayback('再生中: ' + speech.voiceName);
+    }
+  } catch (error) {
+    if (generation !== speechGeneration) return;
+    disposeSpeechAudio();
+    const message = String(error?.message ?? error);
+    console.error('VoiSona speech failed:', error);
+    window.aronaDesktop.reportVoicePlayback('再生失敗: ' + message);
+  }
+}
 
 function reportIdle(message) {
   idleInfo = String(message);
@@ -437,6 +497,8 @@ quitButton.addEventListener('click', () => window.aronaDesktop.quit());
 window.aronaDesktop.onZoom(zoom);
 window.aronaDesktop.onModelChanged(loadModel);
 window.aronaDesktop.onEmotionChange(setEmotion);
+window.aronaDesktop.onVoiceTest(() => speakLatest('先生、こんにちは！ コア・アロナ・デスクトップから、お話ししています。'));
+window.aronaDesktop.onVoiceStop(stopSpeech);
 
 // Keep emotion morphs separate from VMD-driven blinking and future lip sync.
 // MmdRuntime is registered earlier, so this observer applies emotion weights
