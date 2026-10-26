@@ -7,7 +7,9 @@
 // Security:
 // - listens ONLY on IPv4 loopback; never reachable from other machines
 // - unpredictable one-time URL token, expires after 3 minutes
-// - GET/POST must match the exact Host and token, POST requires same Origin
+// - GET/POST must match Host and unguessable path token; POST uses a separate
+//   per-session CSRF token and rejects cross-site requests. The Origin header
+//   can be omitted by privacy tools; its absence alone must not break saves.
 // - no external scripts, subresources, redirects, third-party requests or logs
 // - sends username/password solely to the in-process credential store
 // - the password never appears in the URL, renderer IPC, or the response
@@ -35,12 +37,13 @@ function escapeHtml(value) {
   }[char]));
 }
 
-function page({ action = '', error = '', success = false } = {}) {
+function page({ action = '', csrfToken = '', error = '', success = false } = {}) {
   const heading = success ? '認証情報を保存しました' : 'VoiSona Talk API 認証情報';
   const detail = success
     ? '<p>CORE Arona Desktopに暗号化保存されました。ブラウザーを閉じてアプリに戻ってください。</p>'
     : '<p>このページはお使いのPC内で一時的に開いています。ChromeのGoogleパスワードマネージャー、または有効化済みのiCloudパスワード拡張機能から入力できます。</p>';
   const form = success ? '' : '<form method="POST" autocomplete="on" action="' + escapeHtml(action) + '">' +
+    '<input type="hidden" name="csrf_token" value="' + escapeHtml(csrfToken) + '">' +
     '<label for="username">VoiSona APIユーザー名（メールアドレス）</label>' +
     '<input id="username" name="username" type="email" autocomplete="username" required maxlength="254" autofocus>' +
     '<label for="password">API用パスワード</label>' +
@@ -76,11 +79,13 @@ class BrowserCredentialPortal {
     this.server = null;
     this.expiryTimer = null;
     this.used = false;
+    this.csrfToken = null;
   }
 
   async open() {
     this.close();
     const token = randomBytes(32).toString('hex');
+    const csrfToken = randomBytes(32).toString('hex');
     const route = '/credentials/' + token;
     const server = this.createServer((req, res) => {
       void this.handle(req, res, server, route);
@@ -98,6 +103,7 @@ class BrowserCredentialPortal {
       const port = server.address().port;
       this.origin = 'http://127.0.0.1:' + port;
       this.route = route;
+      this.csrfToken = csrfToken;
       this.used = false;
       this.expiryTimer = setTimeout(() => this.close(), this.ttlMs);
       this.expiryTimer.unref?.();
@@ -126,6 +132,7 @@ class BrowserCredentialPortal {
     this.server = null;
     this.route = null;
     this.origin = null;
+    this.csrfToken = null;
     if (server) server.closeAllConnections?.();
     if (server?.listening) server.close();
   }
@@ -145,13 +152,28 @@ class BrowserCredentialPortal {
       return;
     }
     if (req.method === 'GET') {
-      this.reply(res, 200, page({ action: route }));
+      this.reply(res, 200, page({ action: route, csrfToken: this.csrfToken }));
       return;
     }
-    if (req.method !== 'POST' ||
-        req.headers.origin !== this.origin ||
-        !/^application\/x-www-form-urlencoded(?:;|$)/i.test(req.headers['content-type'] || '')) {
-      this.reply(res, 403, page({ error: 'この送信方法は許可されていません' }));
+    const contentType = req.headers['content-type'] || '';
+    const requestOrigin = req.headers.origin;
+    const fetchSite = req.headers['sec-fetch-site'];
+    const methodOk = req.method === 'POST';
+    const typeOk = /^application\/x-www-form-urlencoded(?:;|$)/i.test(contentType);
+    // Chromium normally includes Origin with an HTML POST, but privacy
+    // extensions can remove it. The separate hidden CSRF token below still
+    // authenticates a legitimate form that lacks Origin.
+    const sourceOk = (!requestOrigin || requestOrigin === this.origin) &&
+      (fetchSite === undefined || fetchSite === 'same-origin' ||
+       fetchSite === 'none');
+    if (!methodOk || !typeOk || !sourceOk) {
+      const reason = !methodOk ? 'POST以外の方式です' :
+        !typeOk ? 'フォーム形式が一致しません' : '送信元が一致しません';
+      this.reply(res, 403, page({
+        action: route, csrfToken: this.csrfToken,
+        error: '送信を受け付けられませんでした（' + reason +
+          '）。ページを再読み込みしてお試しください。'
+      }));
       return;
     }
     const claimedLength = Number(req.headers['content-length'] ?? 0);
@@ -171,6 +193,13 @@ class BrowserCredentialPortal {
         chunks.push(chunk);
       }
       const fields = new URLSearchParams(Buffer.concat(chunks, count).toString('utf8'));
+      if (!this.csrfToken || fields.get('csrf_token') !== this.csrfToken) {
+        this.reply(res, 403, page({
+          action: route, csrfToken: this.csrfToken,
+          error: '一時フォームの確認情報がありません。ページを更新して再送信してください。'
+        }));
+        return;
+      }
       const { username, password } = validateCredentials({
         username: fields.get('username'),
         password: fields.get('password')
@@ -192,6 +221,7 @@ class BrowserCredentialPortal {
       // Errors shown to the user must never contain submitted secrets.
       this.reply(res, 400, page({
         action: route,
+        csrfToken: this.csrfToken,
         error: '保存に失敗しました。入力内容を確認するか、アプリの設定画面から登録してください。'
       }));
     }
