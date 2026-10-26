@@ -1,6 +1,6 @@
 'use strict';
 
-const { app, BrowserWindow, dialog, ipcMain, protocol } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, Menu, protocol } = require('electron');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { resolveAssetPath } = require('./asset-path.cjs');
@@ -32,6 +32,7 @@ protocol.registerSchemesAsPrivileged([{
 
 let mainWindow;
 let currentModelFile = null;
+let clickThrough = false;
 
 function infoForCurrentModel() {
   if (!currentModelFile) return null;
@@ -111,6 +112,51 @@ async function chooseModel() {
   return infoForCurrentModel();
 }
 
+function isOurWindow(event) {
+  return mainWindow && !mainWindow.isDestroyed() && event.sender === mainWindow.webContents;
+}
+
+function setClickThrough(enabled) {
+  if (!mainWindow || mainWindow.isDestroyed() || enabled === clickThrough) return;
+  mainWindow.setIgnoreMouseEvents(enabled, enabled ? { forward: true } : {});
+  clickThrough = enabled;
+}
+
+function showAvatarMenu() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  // The menu itself must be able to receive pointer events.
+  setClickThrough(false);
+
+  const zoom = action => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('avatar:zoom', action);
+    }
+  };
+
+  const menu = Menu.buildFromTemplate([
+    {
+      label: 'モデルを変更...',
+      click: async () => {
+        try {
+          const selected = await chooseModel();
+          if (selected && mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('avatar:model-changed', selected);
+          }
+        } catch (error) {
+          console.error('Unable to choose model from context menu:', error);
+        }
+      }
+    },
+    { type: 'separator' },
+    { label: '拡大', click: () => zoom('in') },
+    { label: '縮小', click: () => zoom('out') },
+    { label: '大きさをリセット', click: () => zoom('reset') },
+    { type: 'separator' },
+    { label: '終了', click: () => app.quit() }
+  ]);
+  menu.popup({ window: mainWindow });
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     title: 'CORE Arona Desktop',
@@ -134,6 +180,7 @@ function createWindow() {
     }
   });
 
+  clickThrough = false;
   mainWindow.setMenuBarVisibility(false);
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   mainWindow.webContents.on('will-navigate', event => event.preventDefault());
@@ -149,6 +196,21 @@ app.whenReady().then(async () => {
   ipcMain.handle('avatar:choose', async event => {
     if (!mainWindow || event.sender !== mainWindow.webContents) throw new Error('Unauthorized window');
     return chooseModel();
+  });
+  ipcMain.on('avatar:menu', event => {
+    if (isOurWindow(event) && currentModelFile) showAvatarMenu();
+  });
+  ipcMain.on('avatar:click-through', (event, enabled) => {
+    if (isOurWindow(event) && typeof enabled === 'boolean') {
+      setClickThrough(enabled);
+    }
+  });
+  ipcMain.on('avatar:move-by', (event, dx, dy) => {
+    if (!isOurWindow(event) || clickThrough || !Number.isFinite(dx) || !Number.isFinite(dy)) return;
+    // A renderer may request only incremental movement, not arbitrary coordinates.
+    if (Math.abs(dx) > 100 || Math.abs(dy) > 100) return;
+    const [x, y] = mainWindow.getPosition();
+    mainWindow.setPosition(Math.round(x + dx), Math.round(y + dy));
   });
   ipcMain.on('avatar:quit', event => {
     if (mainWindow && event.sender === mainWindow.webContents) app.quit();
