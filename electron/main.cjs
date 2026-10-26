@@ -6,6 +6,9 @@ const path = require('node:path');
 const { resolveAssetPath } = require('./asset-path.cjs');
 const { VoiceProxyClient, PROXY_ORIGIN } = require('./voice-proxy.cjs');
 
+// Desktop speech may start from a native context-menu action.
+app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
+
 const SCHEME = 'arona-avatar';
 const ALLOWED_EXTENSIONS = new Set([
   '.pmx', '.pmd', '.png', '.jpg', '.jpeg', '.bmp', '.tga', '.dds',
@@ -41,6 +44,7 @@ let voiceEntries = [];
 let voiceError = '接続を確認していません';
 let selectedVoiceName = null;
 let voiceSynthesis = null;
+let voicePlaybackStatus = 'テスト再生はまだ実行されていません';
 
 async function refreshVoices() {
   try {
@@ -68,6 +72,7 @@ function voiceDiagnostics() {
     '状態: ' + (voiceError || '接続成功'),
     '検出されたライブラリ数: ' + voiceEntries.length,
     '使用音声: ' + (selectedVoiceName ?? '未設定'),
+    '再生状態: ' + voicePlaybackStatus,
     '',
     '前提: VoiSona Talk起動・REST API有効・Proxy起動',
     '推奨Proxy起動: py -m voisona_talk_proxy --host 127.0.0.1 --port 32777',
@@ -450,6 +455,10 @@ app.whenReady().then(async () => {
     } finally {
       if (voiceSynthesis === controller) voiceSynthesis = null;
     }
+  });
+  ipcMain.on('avatar:voice-playback-status', (event, status) => {
+    if (!isOurWindow(event) || typeof status !== 'string') return;
+    voicePlaybackStatus = status.slice(0, 800);
   });
   ipcMain.on('avatar:voice-cancel', event => {
     if (isOurWindow(event) && voiceSynthesis) voiceSynthesis.abort();
