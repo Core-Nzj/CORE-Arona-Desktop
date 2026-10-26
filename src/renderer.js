@@ -1,5 +1,6 @@
 import './style.css';
 import { rectanglesFromAlpha } from './silhouette.mjs';
+import { buildIdleVmd, IDLE_FRAMES } from './idle-vmd.mjs';
 import { Engine } from '@babylonjs/core/Engines/engine';
 import { Scene } from '@babylonjs/core/scene';
 import { ArcRotateCamera } from '@babylonjs/core/Cameras/arcRotateCamera';
@@ -12,10 +13,14 @@ import { RegisterPmxLoader } from 'babylon-mmd/esm/Loader/pmxLoader.pure';
 import { RegisterPmdLoader } from 'babylon-mmd/esm/Loader/pmdLoader.pure';
 import { RegisterMmdOutlineRenderer } from 'babylon-mmd/esm/Loader/mmdOutlineRenderer.pure';
 import { MmdStandardMaterialBuilder } from 'babylon-mmd/esm/Loader/mmdStandardMaterialBuilder';
+import { MmdRuntime } from 'babylon-mmd/esm/Runtime/mmdRuntime';
+import { VmdLoader } from 'babylon-mmd/esm/Loader/vmdLoader';
+import { RegisterMmdRuntimeModelAnimation } from 'babylon-mmd/esm/Runtime/Animation/mmdRuntimeModelAnimation.pure';
 
 RegisterPmxLoader();
 RegisterPmdLoader();
 RegisterMmdOutlineRenderer();
+RegisterMmdRuntimeModelAnimation();
 
 const canvas = document.getElementById('avatar-canvas');
 const status = document.getElementById('status');
@@ -44,13 +49,20 @@ ambient.intensity = 1.15;
 const keyLight = new DirectionalLight('key', new Vector3(-0.6, -1, 0.8), scene);
 keyLight.intensity = 0.65;
 
+const mmdRuntime = new MmdRuntime(scene, null);
+mmdRuntime.register(scene);
+const idleLoader = new VmdLoader(scene);
+
 let activeContainer = null;
+let activeMmdModel = null;
 let activeRoot = null;
 let loadSequence = 0;
 let baseRadius = camera.radius;
 let regionDirty = false;
 let hitRegion = null;
 let dragPointerId = null;
+let lastSilhouetteUpdate = 0;
+let isSeekingIdleLoop = false;
 const alphaCanvas = document.createElement('canvas');
 const alphaContext = alphaCanvas.getContext('2d', { willReadFrequently: true });
 
@@ -171,12 +183,55 @@ function applyAvatarRegion() {
   window.aronaDesktop.setAvatarRegion(hitRegion);
 }
 
+async function attachIdleMotion(container) {
+  // PMX loader exposes the MMD skinned root as the first mesh.
+  // Keep this model instance in MmdRuntime rather than modifying Babylon bones
+  // directly, which can break MMD IK and morph calculations.
+  const rootMesh = container.meshes[0];
+  if (!rootMesh) throw new Error('MMD root mesh was not found');
+
+  const runtimeModel = mmdRuntime.createMmdModel(rootMesh, { buildPhysics: false });
+  try {
+    const boneNames = runtimeModel.runtimeBones.map(bone => b.name);
+    const morphNames = ['まばたき', 'blink', 'Blink'].filter(name => {
+      return Boolean(runtimeModel.morph.getMorphIndices(name)?.length);
+    });
+
+    const buffer = buildIdleVmd({ boneNames, morphNames });
+    const animation = await idleLoader.loadFromBufferAsync('CORE idle', buffer);
+    const handle = runtimeModel.createRuntimeAnimation(animation);
+    runtimeModel.setRuntimeAnimation(handle);
+
+    if (!boneNames.includes('左腕') && !boneNames.includes('右腕') &&
+      !boneNames.includes('LeftArm') && !boneNames.includes('RightArm')) {
+      console.warn('Idle pose: no standard upper-arm bones found; keeping model rest pose');
+    }
+    if (morphNames.length === 0) {
+      console.info('Idle blink: model does not provide a supported blink morph');
+    }
+    return runtimeModel;
+  } catch (error) {
+    mmdRuntime.destroyMmdModel(runtimeModel);
+    throw error;
+  }
+}
+
+async function startIdlePlayback() {
+  try {
+    await mmdRuntime.seekAnimation(0, true);
+    await mmdRuntime.playAnimation();
+  } catch (error) {
+    console.warn('Unable to start idle motion', error);
+  }
+}
+
 async function loadModel(model) {
   if (!model) return;
   const seq = ++loadSequence;
   chooseButton.disabled = true;
   showStatus('読み込み中: ' + model.name);
   let nextContainer;
+  let nextMmdModel = null;
 
   try {
     nextContainer = await LoadAssetContainerAsync(model.url, scene, {
@@ -201,15 +256,31 @@ async function loadModel(model) {
     nextContainer.addAllToScene();
 
     const oldContainer = activeContainer;
+    const oldMmdModel = activeMmdModel;
+    activeMmdModel = null;
     activeContainer = nextContainer;
     activeRoot = root;
     nextContainer = null;
+    if (oldMmdModel) mmdRuntime.destroyMmdModel(oldMmdModel);
     if (oldContainer) {
       oldContainer.removeAllFromScene();
       oldContainer.dispose();
     }
 
     fitCamera(root);
+    try {
+      nextMmdModel = await attachIdleMotion(activeContainer);
+      if (seq !== loadSequence) {
+        mmdRuntime.destroyMmdModel(nextMmdModel);
+        return;
+      }
+    } catch (idleError) {
+      // Keep the proven Phase 1 model display even when a custom PMX rig
+      // cannot be animated. The app is still usable.
+      console.warn('Idle motion unavailable; static model retained:', idleError);
+    }
+    activeMmdModel = nextMmdModel;
+    if (activeMmdModel) void startIdlePlayback();
     placeholder.hidden = true;
     regionDirty = true;
   } catch (error) {
@@ -285,6 +356,18 @@ window.aronaDesktop.onModelChanged(loadModel);
 
 engine.runRenderLoop(() => {
   scene.render();
+  if (activeMmdModel && !isSeekingIdleLoop && mmdRuntime.currentFrameTime >= IDLE_FRAMES - 1) {
+    isSeekingIdleLoop = true;
+    void mmdRuntime.seekAnimation(0, true).catch(error => {
+      console.warn('Idle animation loop could not be reset', error);
+    }).finally(() => { isSeekingIdleLoop = false; });
+  }
+  // Update the hit silhouette at 5 Hz while animating; a resting model
+  // no longer has a truly static outline.
+  if (activeMmdModel && performance.now() - lastSilhouetteUpdate >= 200) {
+    lastSilhouetteUpdate = performance.now();
+    regionDirty = true;
+  }
   if (regionDirty) {
     regionDirty = false;
     applyAvatarRegion();
