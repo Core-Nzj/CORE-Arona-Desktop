@@ -1,4 +1,5 @@
 import './style.css';
+import { rectanglesFromAlpha } from './silhouette.mjs';
 import { Engine } from '@babylonjs/core/Engines/engine';
 import { Scene } from '@babylonjs/core/scene';
 import { ArcRotateCamera } from '@babylonjs/core/Cameras/arcRotateCamera';
@@ -24,7 +25,8 @@ const quitButton = document.getElementById('quit-app');
 
 const engine = new Engine(canvas, true, {
   stencil: true,
-  preserveDrawingBuffer: false,
+  // Required to sample rendered alpha for the native mouse-hit silhouette.
+  preserveDrawingBuffer: true,
   premultipliedAlpha: false
 });
 const scene = new Scene(engine);
@@ -48,7 +50,9 @@ let loadSequence = 0;
 let baseRadius = camera.radius;
 let regionDirty = false;
 let hitRegion = null;
-let drag = null;
+let dragPointerId = null;
+const alphaCanvas = document.createElement('canvas');
+const alphaContext = alphaCanvas.getContext('2d', { willReadFrequently: true });
 
 function showStatus(message) {
   placeholder.hidden = false;
@@ -131,8 +135,39 @@ function applyAvatarRegion() {
     return;
   }
 
-  hitRegion = projectAvatarBounds();
-  // A null rectangle means "keep the whole window interactive".
+  const screenWidth = Math.round(canvas.clientWidth);
+  const screenHeight = Math.round(canvas.clientHeight);
+  if (screenWidth < 1 || screenHeight < 1) return;
+
+  const tileSize = 5;
+  const columns = Math.ceil(screenWidth / tileSize);
+  const rows = Math.ceil(screenHeight / tileSize);
+
+  try {
+    // The canvas is a transparent WebGL render. Shrinking it to 5px tiles
+    // preserves a coarse alpha mask for hair, sleeves, legs, gaps etc.
+    alphaCanvas.width = columns;
+    alphaCanvas.height = rows;
+    alphaContext.clearRect(0, 0, columns, rows);
+    alphaContext.drawImage(canvas, 0, 0, columns, rows);
+    const pixels = alphaContext.getImageData(0, 0, columns, rows).data;
+    const silhouetteRects = rectanglesFromAlpha(
+      pixels, columns, rows, screenWidth, screenHeight,
+      { threshold: 8, dilation: 1, maxRectangles: 1800 }
+    );
+    if (silhouetteRects.length) {
+      hitRegion = silhouetteRects;
+      window.aronaDesktop.setAvatarRegion(silhouetteRects);
+      return;
+    }
+  } catch (error) {
+    console.warn('Silhouette alpha readback unavailable, using bounding box', error);
+  }
+
+  // Never make the model impossible to click if a GPU/driver cannot provide
+  // alpha data. This fallback is larger than the visible silhouette.
+  const bounds = projectAvatarBounds();
+  hitRegion = bounds ? [bounds] : null;
   window.aronaDesktop.setAvatarRegion(hitRegion);
 }
 
@@ -193,38 +228,39 @@ function avatarIsInteractive() {
   return activeContainer !== null && placeholder.hidden;
 }
 
-// Windows restricts pointer delivery to the model rectangle using setShape.
-// This avoids the global click-through trap that swallowed all mouse buttons.
+// The native shaped window only accepts mouse input on the avatar's silhouette.
 canvas.addEventListener('contextmenu', event => {
   event.preventDefault();
   if (avatarIsInteractive()) window.aronaDesktop.showMenu();
 });
 
-canvas.addEventListener('mousedown', event => {
+// Dragging is driven by the Windows cursor in the Electron main process.
+// DOM mousemove deltas are unreliable because the window itself moves.
+canvas.addEventListener('pointerdown', event => {
   if (event.button !== 0 || !avatarIsInteractive()) return;
   event.preventDefault();
-  drag = { screenX: event.screenX, screenY: event.screenY };
+  dragPointerId = event.pointerId;
+  try { canvas.setPointerCapture(event.pointerId); } catch { /* best effort */ }
   canvas.style.cursor = 'grabbing';
-});
-
-window.addEventListener('mousemove', event => {
-  if (!drag) {
-    canvas.style.cursor = avatarIsInteractive() ? 'grab' : 'default';
-    return;
-  }
-  const dx = event.screenX - drag.screenX;
-  const dy = event.screenY - drag.screenY;
-  drag.screenX = event.screenX;
-  drag.screenY = event.screenY;
-  if (dx !== 0 || dy !== 0) window.aronaDesktop.moveBy(dx, dy);
+  window.aronaDesktop.startDrag();
 });
 
 function endDrag() {
-  drag = null;
+  if (dragPointerId === null) return;
+  const id = dragPointerId;
+  dragPointerId = null;
+  window.aronaDesktop.stopDrag();
+  if (canvas.hasPointerCapture(id)) canvas.releasePointerCapture(id);
   canvas.style.cursor = avatarIsInteractive() ? 'grab' : 'default';
 }
+window.addEventListener('pointerup', endDrag);
+window.addEventListener('pointercancel', endDrag);
 window.addEventListener('mouseup', endDrag);
 window.addEventListener('blur', endDrag);
+canvas.addEventListener('lostpointercapture', endDrag);
+canvas.addEventListener('pointermove', () => {
+  if (dragPointerId === null && avatarIsInteractive()) canvas.style.cursor = 'grab';
+});
 
 canvas.addEventListener('wheel', event => {
   if (!avatarIsInteractive()) return;
