@@ -6,7 +6,6 @@ dist/
 .env
 .env.*
 !.env.example
-# User-owned, potentially restricted MMD assets must never be committed.
 models/
 assets/private/
 *.pmx

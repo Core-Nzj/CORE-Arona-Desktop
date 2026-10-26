@@ -1,0 +1,47 @@
+:root {
+  color-scheme: dark;
+  font-family: "Segoe UI", "Yu Gothic UI", sans-serif;
+  font-size: 12px;
+}
+* { box-sizing: border-box; }
+html, body, #app { margin: 0; width: 100%; height: 100%; overflow: hidden; background: transparent; }
+#app { position: relative; }
+#avatar-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; outline: none; }
+#toolbar {
+  position: absolute; top: 8px; left: 8px; right: 8px;
+  display: flex; align-items: center; gap: 6px;
+  border: 1px solid rgba(122, 203, 250, 0.26);
+  background: rgba(17, 33, 51, 0.88);
+  border-radius: 12px; height: 36px; padding: 4px;
+  box-shadow: 0 4px 18px rgba(0,0,0,.18);
+}
+#drag-handle {
+  flex: 1; height: 100%; display: flex; align-items: center; justify-content: space-between;
+  padding: 0 10px; font-size: 10px; color: #caebfc; letter-spacing: .15em;
+  -webkit-app-region: drag; user-select: none; cursor: grab;
+}
+.grip { font-size: 16px; letter-spacing: 0; opacity: .75; }
+button {
+  -webkit-app-region: no-drag; background: #d7efff; color: #142738;
+  border: 0; border-radius: 8px; padding: 7px 10px;
+  font: inherit; font-weight: 600; cursor: pointer;
+}
+button:hover { background: #fff; }
+button:disabled { opacity: .65; cursor: progress; }
+#quit-app { font-size: 18px; padding: 3px 9px; }
+#placeholder {
+  position: absolute; top: 35%; left: 8%; width: 84%; text-align: center;
+  background: rgba(16, 32, 48, .84); padding: 24px 14px;
+  border-radius: 20px; border: 1px solid rgba(175, 227, 255, .28);
+  line-height: 1.7; color: #fff;
+}
+#placeholder[hidden], #model-label[hidden] { display: none; }
+#placeholder.small-error { top: auto; bottom: 48px; }
+#placeholder p { font-size: 11px; color: #c3d7e4; margin: 8px 0 0; }
+.initial { display: inline-grid; place-items: center; width: 54px; height: 54px; margin-bottom: 12px; background: #a3dbf9; border-radius: 50%; color: #182c41; font-size: 30px; font-weight: bold; }
+#status { overflow-wrap: anywhere; }
+#model-label {
+  position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%);
+  max-width: 90%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+  color: #e4f6ff; padding: 6px 10px; border-radius: 20px; background: rgba(18, 39, 58, .8);
+}
