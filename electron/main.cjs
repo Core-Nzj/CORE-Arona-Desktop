@@ -73,14 +73,14 @@ async function startProxyAndRefresh() {
   return proxyStartup;
 }
 
-function voiceSettingsStatus() {
+async function voiceSettingsStatus() {
   return {
     saved: credentials !== null,
     username: credentials?.username || '',
     encryptionAvailable: credentialStore?.available() ?? false,
     proxy: {
       ...proxyManager.status(),
-      running: voiceError === '' || voiceEntries.length > 0
+      running: await proxyManager.isAvailable()
     },
     error: credentialsError
   };
