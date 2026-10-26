@@ -1,6 +1,7 @@
 import './style.css';
 import { rectanglesFromAlpha } from './silhouette.mjs';
 import { buildIdleVmd, IDLE_FRAMES } from './idle-vmd.mjs';
+import { EmotionController } from './emotions.mjs';
 import { Engine } from '@babylonjs/core/Engines/engine';
 import { Scene } from '@babylonjs/core/scene';
 import { ArcRotateCamera } from '@babylonjs/core/Cameras/arcRotateCamera';
@@ -57,6 +58,7 @@ idleLoader.loggingEnabled = true;
 
 let activeContainer = null;
 let activeMmdModel = null;
+let emotionController = null;
 let activeRoot = null;
 let loadSequence = 0;
 let baseRadius = camera.radius;
@@ -73,6 +75,30 @@ function reportIdle(message) {
   idleInfo = String(message);
   console.info('[CORE idle]', idleInfo);
   window.aronaDesktop.reportIdleStatus(idleInfo);
+}
+
+function reportEmotionState() {
+  if (!emotionController) {
+    window.aronaDesktop.reportEmotionState({
+      selected: 'neutral',
+      available: { neutral: true },
+      details: 'モデルに対応する表情コントローラーがありません'
+    });
+    return;
+  }
+  window.aronaDesktop.reportEmotionState({
+    selected: emotionController.selected,
+    available: emotionController.available(),
+    details: emotionController.diagnostics()
+  });
+}
+
+function setEmotion(id) {
+  if (!emotionController) return;
+  if (emotionController.select(id)) {
+    console.info('[CORE emotion]', id);
+    reportEmotionState();
+  }
 }
 
 const alphaCanvas = document.createElement('canvas');
@@ -283,6 +309,11 @@ async function loadModel(model) {
 
     const oldContainer = activeContainer;
     const oldMmdModel = activeMmdModel;
+    if (emotionController) {
+      emotionController.dispose();
+      emotionController = null;
+    }
+    reportEmotionState();
     activeMmdModel = null;
     activeContainer = nextContainer;
     activeRoot = root;
@@ -307,6 +338,14 @@ async function loadModel(model) {
       reportIdle('アニメーションの初期化例外: ' + String(idleError?.stack ?? idleError));
     }
     activeMmdModel = nextMmdModel;
+    try {
+      if (activeMmdModel?.morph) {
+        emotionController = new EmotionController(activeMmdModel.morph);
+      }
+    } catch (emotionError) {
+      console.warn('Unable to initialize emotion controller:', emotionError);
+    }
+    reportEmotionState();
     if (activeMmdModel) {
       // Verify that the runtime's clock actually advances after activation.
       // If the loader silently failed, the right-click diagnostics will say so.
@@ -397,6 +436,14 @@ chooseButton.addEventListener('click', async () => {
 quitButton.addEventListener('click', () => window.aronaDesktop.quit());
 window.aronaDesktop.onZoom(zoom);
 window.aronaDesktop.onModelChanged(loadModel);
+window.aronaDesktop.onEmotionChange(setEmotion);
+
+// Keep emotion morphs separate from VMD-driven blinking and future lip sync.
+// MmdRuntime is registered earlier, so this observer applies emotion weights
+// during the scene update without taking over the MMD animation tracks.
+scene.onBeforeRenderObservable.add(() => {
+  emotionController?.tick(Math.min(0.1, engine.getDeltaTime() / 1000));
+});
 
 engine.runRenderLoop(() => {
   scene.render();
