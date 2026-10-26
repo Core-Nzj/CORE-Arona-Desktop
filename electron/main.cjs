@@ -78,6 +78,7 @@ async function voiceSettingsStatus() {
     saved: credentials !== null,
     username: credentials?.username || '',
     encryptionAvailable: credentialStore?.available() ?? false,
+    voice: { count: voiceEntries.length, error: voiceError },
     proxy: {
       ...proxyManager.status(),
       running: await proxyManager.isAvailable()
