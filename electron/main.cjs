@@ -34,6 +34,7 @@ let mainWindow;
 let currentModelFile = null;
 let dragTimer = null;
 let dragStart = null;
+let idleDiagnostics = 'モーションの読み込みを待っています';
 
 function infoForCurrentModel() {
   if (!currentModelFile) return null;
@@ -203,6 +204,20 @@ function showAvatarMenu() {
     { label: '縮小', click: () => zoom('out') },
     { label: '大きさをリセット', click: () => zoom('reset') },
     { type: 'separator' },
+    {
+      label: 'モーション診断',
+      click: () => {
+        if (!mainWindow || mainWindow.isDestroyed()) return;
+        void dialog.showMessageBox(mainWindow, {
+          type: 'info',
+          title: 'CORE Arona Desktop / Phase 2-1',
+          message: '待機モーションの診断',
+          detail: idleDiagnostics,
+          buttons: ['閉じる']
+        });
+      }
+    },
+    { type: 'separator' },
     { label: '終了', click: () => app.quit() }
   ]);
   stopAvatarDrag();
@@ -253,6 +268,10 @@ app.whenReady().then(async () => {
   });
   ipcMain.on('avatar:set-region', (event, rect) => {
     if (isOurWindow(event)) setAvatarRegion(rect);
+  });
+  ipcMain.on('avatar:idle-status', (event, diagnostic) => {
+    if (!isOurWindow(event) || typeof diagnostic !== 'string') return;
+    idleDiagnostics = diagnostic.slice(0, 3500);
   });
   ipcMain.on('avatar:drag-start', event => {
     if (isOurWindow(event)) startAvatarDrag();
