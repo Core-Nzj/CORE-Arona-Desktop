@@ -33,7 +33,8 @@ test('opens a one-time loopback browser form with password manager hints', async
   const rejected = await fetch(openedUrl, {
     method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded',
       'Origin': 'https://evil.example' },
-    body: new URLSearchParams({ username: 'test@example.com', password: 'bad', csrf_token: csrfToken })
+    // The random CSRF token is NOT available to a cross-site page.
+    body: new URLSearchParams({ username: 'test@example.com', password: 'bad' })
   });
   assert.equal(rejected.status, 403);
   assert.equal(imported.length, 0);
@@ -147,7 +148,7 @@ test('privacy extensions may omit Origin while one-time CSRF still secures savin
   });
 });
 
-test('cross-site requests remain denied even with a valid one-time token', async t => {
+test('cross-site-looking Origin and Fetch Metadata cannot block a legitimate one-time form', async t => {
   let url;
   let saved = false;
   const portal = new BrowserCredentialPortal({
@@ -162,15 +163,46 @@ test('cross-site requests remain denied even with a valid one-time token', async
   const payload = new URLSearchParams({
     username: 'any@example.org', password: 'test', csrf_token: csrfToken
   });
-  const denied = await fetch(url, {
+  const accepted = await fetch(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/x-www-form-urlencoded',
-      'Origin': 'https://malicious.example',
+      'Origin': 'null',
       'Sec-Fetch-Site': 'cross-site'
     },
     body: payload
   });
-  assert.equal(denied.status, 403);
-  assert.equal(saved, false);
+  assert.equal(accepted.status, 200);
+  assert.equal(saved, true);
+});
+
+
+test('guessed path and mismatched form token always fail even with matching Origin', async t => {
+  let url;
+  let saves = 0;
+  const portal = new BrowserCredentialPortal({
+    preferredPort: 0,
+    openExternal: async opened => { url = opened; },
+    onCredentials: async () => { saves++; }
+  });
+  t.after(() => portal.close());
+  await portal.open();
+  const expectedOrigin = new URL(url).origin;
+
+  const missing = await fetch(url, {
+    method: 'POST',
+    headers: { 'Origin': expectedOrigin, 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ username: 'user@example.jp', password: 'api' })
+  });
+  assert.equal(missing.status, 403);
+
+  const fabricated = await fetch(url, {
+    method: 'POST',
+    headers: { 'Origin': expectedOrigin, 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      username: 'user@example.jp', password: 'api', csrf_token: '0'.repeat(64)
+    })
+  });
+  assert.equal(fabricated.status, 403);
+  assert.equal(saves, 0);
 });
