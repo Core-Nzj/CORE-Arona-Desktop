@@ -1,10 +1,12 @@
 'use strict';
 
-const { app, BrowserWindow, dialog, ipcMain, Menu, protocol, screen } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, Menu, protocol, screen, safeStorage } = require('electron');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { resolveAssetPath } = require('./asset-path.cjs');
 const { VoiceProxyClient, PROXY_ORIGIN } = require('./voice-proxy.cjs');
+const { VoiceCredentialStore } = require('./voice-credentials.cjs');
+const { ProxyManager } = require('./proxy-manager.cjs');
 
 // Desktop speech may start from a native context-menu action.
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
@@ -35,6 +37,12 @@ protocol.registerSchemesAsPrivileged([{
 }]);
 
 let mainWindow;
+let settingsWindow = null;
+const proxyManager = new ProxyManager();
+let credentialStore = null;
+let credentials = null;
+let credentialsError = '';
+let proxyStartup = null;
 let currentModelFile = null;
 let dragTimer = null;
 let dragStart = null;
@@ -45,6 +53,66 @@ let voiceError = '接続を確認していません';
 let selectedVoiceName = null;
 let voiceSynthesis = null;
 let voicePlaybackStatus = 'テスト再生はまだ実行されていません';
+
+function isSettingsWindow(event) {
+  return settingsWindow && !settingsWindow.isDestroyed() &&
+    event.sender === settingsWindow.webContents;
+}
+
+async function startProxyAndRefresh() {
+  if (proxyStartup) return proxyStartup;
+  proxyStartup = (async () => {
+    const state = await proxyManager.ensureRunning();
+    if (state.running) await refreshVoices();
+    else {
+      voiceEntries = [];
+      voiceError = state.error || 'Proxyが起動していません';
+    }
+    return state;
+  })().finally(() => { proxyStartup = null; });
+  return proxyStartup;
+}
+
+function voiceSettingsStatus() {
+  return {
+    saved: credentials !== null,
+    username: credentials?.username || '',
+    encryptionAvailable: credentialStore?.available() ?? false,
+    proxy: {
+      ...proxyManager.status(),
+      running: voiceError === '' || voiceEntries.length > 0
+    },
+    error: credentialsError
+  };
+}
+
+function openVoiceSettings() {
+  if (settingsWindow && !settingsWindow.isDestroyed()) {
+    settingsWindow.focus();
+    return;
+  }
+  settingsWindow = new BrowserWindow({
+    title: 'VoiSona Talk 接続設定',
+    parent: mainWindow,
+    modal: true,
+    width: 545,
+    height: 565,
+    resizable: false,
+    autoHideMenuBar: true,
+    backgroundColor: '#f6f8fb',
+    webPreferences: {
+      preload: path.join(__dirname, 'voice-settings-preload.cjs'),
+      contextIsolation: true,
+      sandbox: true,
+      nodeIntegration: false,
+      webSecurity: true
+    }
+  });
+  settingsWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  settingsWindow.webContents.on('will-navigate', event => event.preventDefault());
+  settingsWindow.loadFile(path.join(__dirname, 'voice-settings.html'));
+  settingsWindow.on('closed', () => { settingsWindow = null; });
+}
 
 async function refreshVoices() {
   try {
@@ -75,10 +143,12 @@ function voiceDiagnostics() {
     '再生状態: ' + voicePlaybackStatus,
     '音声形式: ' + voiceClient.lastWavInfo,
     '',
-    '前提: VoiSona Talk起動・REST API有効・Proxy起動',
-    '推奨Proxy起動: py -m voisona_talk_proxy --host 127.0.0.1 --port 32777',
-    'Proxyには事前にVoiSonaの認証情報を設定してください。',
-    'このアプリはVoiSonaの認証情報を保存しません。'
+    'Proxy管理: ' + (proxyManager.status().managed
+      ? 'このアプリが起動・管理' : '外部起動または停止中'),
+    '自動起動エラー: ' + (proxyManager.status().error || 'なし'),
+    '認証情報: ' + (credentials ? 'Windowsで暗号化保存済み' : '未設定'),
+    '前提: VoiSona Talk本体を起動しREST APIを有効にする',
+    '接続設定は右クリック → 音声 → 接続設定・認証情報から変更できます。'
   ].join('\n');
 }
 const EMOTION_OPTIONS = Object.freeze([
@@ -247,14 +317,19 @@ function showAvatarMenu() {
 
   const voiceSubmenu = [
     {
+      label: '接続設定・認証情報...',
+      click: () => openVoiceSettings()
+    },
+    { type: 'separator' },
+    {
       label: voiceError ? '未接続（更新してください）' : '接続中',
       enabled: false
     },
     { type: 'separator' },
     {
-      label: '接続・音声一覧を更新',
+      label: 'Proxyを起動・音声一覧を更新',
       click: async () => {
-        await refreshVoices();
+        await startProxyAndRefresh();
         if (mainWindow && !mainWindow.isDestroyed()) {
           await dialog.showMessageBox(mainWindow, {
             type: voiceError ? 'warning' : 'info',
@@ -441,6 +516,37 @@ app.whenReady().then(async () => {
         : '表情モーフの診断結果がありません'
     };
   });
+  ipcMain.handle('voice-settings:status', async event => {
+    if (!isSettingsWindow(event)) throw new Error('Unauthorized settings window');
+    return voiceSettingsStatus();
+  });
+  ipcMain.handle('voice-settings:save', async (event, data) => {
+    if (!isSettingsWindow(event)) throw new Error('Unauthorized settings window');
+    const username = typeof data?.username === 'string' ? data.username.trim() : '';
+    let password = typeof data?.password === 'string' ? data.password : '';
+    if (!password && credentials?.username === username) password = credentials.password;
+    const saved = await credentialStore.write(username, password);
+    credentials = saved;
+    credentialsError = '';
+    voiceClient.setCredentials(saved);
+    await startProxyAndRefresh();
+    return voiceSettingsStatus();
+  });
+  ipcMain.handle('voice-settings:clear', async event => {
+    if (!isSettingsWindow(event)) throw new Error('Unauthorized settings window');
+    await credentialStore.clear();
+    credentials = null;
+    credentialsError = '';
+    voiceClient.setCredentials(null);
+    // Existing externally-started Proxy may still have credentials set.
+    await refreshVoices();
+    return voiceSettingsStatus();
+  });
+  ipcMain.handle('voice-settings:connect', async event => {
+    if (!isSettingsWindow(event)) throw new Error('Unauthorized settings window');
+    return startProxyAndRefresh();
+  });
+
   ipcMain.handle('avatar:voice-synthesize', async (event, text) => {
     if (!isOurWindow(event)) throw new Error('Unauthorized voice request');
     const voice = currentVoice();
@@ -481,12 +587,23 @@ app.whenReady().then(async () => {
     if (mainWindow && event.sender === mainWindow.webContents) app.quit();
   });
 
+  credentialStore = new VoiceCredentialStore({
+    safeStorage, userDataPath: app.getPath('userData')
+  });
+  try {
+    credentials = await credentialStore.read();
+    voiceClient.setCredentials(credentials);
+  } catch (error) {
+    credentialsError = '暗号化済み認証情報を復号できません。設定画面で再登録してください';
+    console.warn('[CORE Voice] encrypted settings cannot be restored:', error?.message);
+  }
   createWindow();
-  // Startup must remain nonblocking when no voice engine is installed.
-  void refreshVoices();
+  // Check/launch localhost Python proxy without delaying model rendering.
+  void startProxyAndRefresh();
 }).catch(error => {
   console.error('Unable to initialize desktop avatar:', error);
   app.quit();
 });
 
+app.on('before-quit', () => proxyManager.stop());
 app.on('window-all-closed', () => app.quit());
