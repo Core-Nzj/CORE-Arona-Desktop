@@ -5,7 +5,7 @@ import { ArcRotateCamera } from '@babylonjs/core/Cameras/arcRotateCamera';
 import { HemisphericLight } from '@babylonjs/core/Lights/hemisphericLight';
 import { DirectionalLight } from '@babylonjs/core/Lights/directionalLight';
 import { Color3, Color4 } from '@babylonjs/core/Maths/math.color';
-import { Vector3 } from '@babylonjs/core/Maths/math.vector';
+import { Matrix, Vector3 } from '@babylonjs/core/Maths/math.vector';
 import { LoadAssetContainerAsync } from '@babylonjs/core/Loading/sceneLoader';
 import { RegisterPmxLoader } from 'babylon-mmd/esm/Loader/pmxLoader.pure';
 import { RegisterPmdLoader } from 'babylon-mmd/esm/Loader/pmdLoader.pure';
@@ -43,23 +43,18 @@ const keyLight = new DirectionalLight('key', new Vector3(-0.6, -1, 0.8), scene);
 keyLight.intensity = 0.65;
 
 let activeContainer = null;
-let activeMeshes = new Set();
+let activeRoot = null;
 let loadSequence = 0;
 let baseRadius = camera.radius;
-let ignoringMouse = false;
+let regionDirty = false;
+let hitRegion = null;
 let drag = null;
-let lastPointer = null;
-
-function setClickThrough(enabled) {
-  if (enabled === ignoringMouse) return;
-  ignoringMouse = enabled;
-  window.aronaDesktop.setClickThrough(enabled);
-}
 
 function showStatus(message) {
   placeholder.hidden = false;
   status.textContent = message;
-  setClickThrough(false);
+  window.aronaDesktop.setAvatarRegion(null);
+  hitRegion = null;
 }
 
 function fitCamera(rootMesh) {
@@ -79,39 +74,66 @@ function fitCamera(rootMesh) {
   camera.beta = Math.PI / 2;
   camera.radius = Math.max(verticalDistance, horizontalDistance, size.z * 2, 1) * 1.22;
   baseRadius = camera.radius;
+  regionDirty = true;
 }
 
 function zoom(action) {
   if (!activeContainer) return;
-  if (action === 'reset') {
-    camera.radius = baseRadius;
+  if (action === 'reset') camera.radius = baseRadius;
+  else if (action === 'in' || action === 'out') {
+    const factor = action === 'in' ? 0.85 : 1 / 0.85;
+    camera.radius = Math.min(baseRadius * 4, Math.max(baseRadius * 0.3, camera.radius * factor));
+  } else return;
+  regionDirty = true;
+}
+
+function projectAvatarBounds() {
+  if (!activeRoot) return null;
+  const bounds = activeRoot.getHierarchyBoundingVectors(true);
+  const { min, max } = bounds;
+  const viewport = camera.viewport.toGlobal(canvas.clientWidth, canvas.clientHeight);
+  const matrix = scene.getTransformMatrix();
+  const identity = Matrix.Identity();
+  const points = [];
+
+  for (const x of [min.x, max.x]) {
+    for (const y of [min.y, max.y]) {
+      for (const z of [min.z, max.z]) {
+        const p = Vector3.Project(new Vector3(x, y, z), identity, matrix, viewport);
+        if (Number.isFinite(p.x) && Number.isFinite(p.y)) points.push(p);
+      }
+    }
+  }
+  if (!points.length) return null;
+
+  const padding = 18;
+  const minX = Math.min(...points.map(p => p.x));
+  const maxX = Math.max(...points.map(p => p.x));
+  const minY = Math.min(...points.map(p => p.y));
+  const maxY = Math.max(...points.map(p => p.y));
+
+  const width = canvas.clientWidth;
+  const height = canvas.clientHeight;
+  const x1 = Math.max(0, Math.floor(minX - padding));
+  const x2 = Math.min(width, Math.ceil(maxX + padding));
+  const y1 = Math.max(0, Math.floor(minY - padding));
+  const y2 = Math.min(height, Math.ceil(maxY + padding));
+
+  // Never make the model inaccessible due to invalid projection data.
+  if (x2 - x1 < 15 || y2 - y1 < 30) return null;
+  return { x: x1, y: y1, width: x2 - x1, height: y2 - y1 };
+}
+
+function applyAvatarRegion() {
+  if (!placeholder.hidden || !activeRoot) {
+    hitRegion = null;
+    window.aronaDesktop.setAvatarRegion(null);
     return;
   }
-  if (action !== 'in' && action !== 'out') return;
-  const factor = action === 'in' ? 0.85 : 1 / 0.85;
-  camera.radius = Math.min(baseRadius * 4, Math.max(baseRadius * 0.3, camera.radius * factor));
-}
 
-// Pick the character's actual mesh rather than its transparent window rectangle.
-function isAvatarAt(x, y) {
-  if (!activeContainer || !placeholder.hidden) return false;
-  const result = scene.pick(x, y, mesh => activeMeshes.has(mesh) && mesh.isEnabled());
-  return Boolean(result && result.hit);
-}
-
-function refreshPointer(x, y) {
-  if (drag || !placeholder.hidden || !activeContainer) {
-    setClickThrough(false);
-    return;
-  }
-  const overAvatar = isAvatarAt(x, y);
-  canvas.style.cursor = overAvatar ? 'grab' : 'default';
-  setClickThrough(!overAvatar);
-}
-
-function refreshAfterLoad() {
-  if (lastPointer) refreshPointer(lastPointer.x, lastPointer.y);
-  else setClickThrough(true);
+  hitRegion = projectAvatarBounds();
+  // A null rectangle means "keep the whole window interactive".
+  window.aronaDesktop.setAvatarRegion(hitRegion);
 }
 
 async function loadModel(model) {
@@ -145,7 +167,7 @@ async function loadModel(model) {
 
     const oldContainer = activeContainer;
     activeContainer = nextContainer;
-    activeMeshes = new Set(nextContainer.meshes);
+    activeRoot = root;
     nextContainer = null;
     if (oldContainer) {
       oldContainer.removeAllFromScene();
@@ -154,7 +176,7 @@ async function loadModel(model) {
 
     fitCamera(root);
     placeholder.hidden = true;
-    refreshAfterLoad();
+    regionDirty = true;
   } catch (error) {
     if (seq === loadSequence) {
       console.error('Failed to load MMD model:', error);
@@ -167,48 +189,45 @@ async function loadModel(model) {
   }
 }
 
-// Once loaded, the avatar is the only UI. A right-click opens the native menu.
+function avatarIsInteractive() {
+  return activeContainer !== null && placeholder.hidden;
+}
+
+// Windows restricts pointer delivery to the model rectangle using setShape.
+// This avoids the global click-through trap that swallowed all mouse buttons.
 canvas.addEventListener('contextmenu', event => {
   event.preventDefault();
-  if (isAvatarAt(event.clientX, event.clientY)) {
-    window.aronaDesktop.showMenu();
-  }
+  if (avatarIsInteractive()) window.aronaDesktop.showMenu();
 });
 
 canvas.addEventListener('mousedown', event => {
-  if (event.button !== 0 || !isAvatarAt(event.clientX, event.clientY)) return;
+  if (event.button !== 0 || !avatarIsInteractive()) return;
   event.preventDefault();
   drag = { screenX: event.screenX, screenY: event.screenY };
   canvas.style.cursor = 'grabbing';
-  setClickThrough(false);
 });
 
 window.addEventListener('mousemove', event => {
-  lastPointer = { x: event.clientX, y: event.clientY };
-  if (drag) {
-    const dx = event.screenX - drag.screenX;
-    const dy = event.screenY - drag.screenY;
-    drag.screenX = event.screenX;
-    drag.screenY = event.screenY;
-    if (dx !== 0 || dy !== 0) window.aronaDesktop.moveBy(dx, dy);
+  if (!drag) {
+    canvas.style.cursor = avatarIsInteractive() ? 'grab' : 'default';
     return;
   }
-  refreshPointer(event.clientX, event.clientY);
+  const dx = event.screenX - drag.screenX;
+  const dy = event.screenY - drag.screenY;
+  drag.screenX = event.screenX;
+  drag.screenY = event.screenY;
+  if (dx !== 0 || dy !== 0) window.aronaDesktop.moveBy(dx, dy);
 });
 
 function endDrag() {
-  if (!drag) return;
   drag = null;
-  if (lastPointer) refreshPointer(lastPointer.x, lastPointer.y);
+  canvas.style.cursor = avatarIsInteractive() ? 'grab' : 'default';
 }
 window.addEventListener('mouseup', endDrag);
 window.addEventListener('blur', endDrag);
-window.addEventListener('mouseleave', () => {
-  if (!drag && activeContainer && placeholder.hidden) setClickThrough(true);
-});
 
 canvas.addEventListener('wheel', event => {
-  if (!isAvatarAt(event.clientX, event.clientY)) return;
+  if (!avatarIsInteractive()) return;
   event.preventDefault();
   zoom(event.deltaY < 0 ? 'in' : 'out');
 }, { passive: false });
@@ -228,8 +247,14 @@ quitButton.addEventListener('click', () => window.aronaDesktop.quit());
 window.aronaDesktop.onZoom(zoom);
 window.aronaDesktop.onModelChanged(loadModel);
 
-engine.runRenderLoop(() => scene.render());
-window.addEventListener('resize', () => engine.resize());
+engine.runRenderLoop(() => {
+  scene.render();
+  if (regionDirty) {
+    regionDirty = false;
+    applyAvatarRegion();
+  }
+});
+window.addEventListener('resize', () => { engine.resize(); regionDirty = true; });
 
 window.aronaDesktop.currentModel()
   .then(model => { if (model) return loadModel(model); })
