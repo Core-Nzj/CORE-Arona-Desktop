@@ -35,6 +35,18 @@ let currentModelFile = null;
 let dragTimer = null;
 let dragStart = null;
 let idleDiagnostics = 'モーションの読み込みを待っています';
+const EMOTION_OPTIONS = Object.freeze([
+  { id: 'neutral', label: '通常' },
+  { id: 'happy', label: '笑顔' },
+  { id: 'angry', label: '怒り' },
+  { id: 'sad', label: '悲しみ' },
+  { id: 'surprised', label: '驚き' }
+]);
+let emotionState = { available: { neutral: true }, selected: 'neutral', details: 'モデルの読み込み待ち' };
+
+function resetEmotionState() {
+  emotionState = { available: { neutral: true }, selected: 'neutral', details: '表情を確認中' };
+}
 
 function infoForCurrentModel() {
   if (!currentModelFile) return null;
@@ -110,6 +122,7 @@ async function chooseModel() {
   });
   if (result.canceled || result.filePaths.length === 0) return null;
   currentModelFile = result.filePaths[0];
+  resetEmotionState();
   await saveModelSelection();
   return infoForCurrentModel();
 }
@@ -199,11 +212,38 @@ function showAvatarMenu() {
         }
       }
     },
+    {
+      label: '表情',
+      submenu: EMOTION_OPTIONS.map(({ id, label }) => ({
+        label,
+        type: 'radio',
+        checked: emotionState.selected === id,
+        enabled: emotionState.available[id] === true,
+        click: () => {
+          if (!mainWindow || mainWindow.isDestroyed()) return;
+          if (emotionState.available[id] !== true) return;
+          mainWindow.webContents.send('avatar:emotion-change', id);
+        }
+      }))
+    },
     { type: 'separator' },
     { label: '拡大', click: () => zoom('in') },
     { label: '縮小', click: () => zoom('out') },
     { label: '大きさをリセット', click: () => zoom('reset') },
     { type: 'separator' },
+    {
+      label: '表情診断',
+      click: () => {
+        if (!mainWindow || mainWindow.isDestroyed()) return;
+        void dialog.showMessageBox(mainWindow, {
+          type: 'info',
+          title: 'CORE Arona Desktop / Phase 2-2',
+          message: 'モデルの表情対応',
+          detail: emotionState.details,
+          buttons: ['閉じる']
+        });
+      }
+    },
     {
       label: 'モーション診断',
       click: () => {
@@ -268,6 +308,22 @@ app.whenReady().then(async () => {
   });
   ipcMain.on('avatar:set-region', (event, rect) => {
     if (isOurWindow(event)) setAvatarRegion(rect);
+  });
+  ipcMain.on('avatar:emotions-state', (event, state) => {
+    if (!isOurWindow(event) || !state || typeof state !== 'object') return;
+    const available = { neutral: true };
+    for (const { id } of EMOTION_OPTIONS) {
+      if (id !== 'neutral') available[id] = state.available?.[id] === true;
+    }
+    const requested = typeof state.selected === 'string' ? state.selected : 'neutral';
+    const selected = available[requested] === true ? requested : 'neutral';
+    emotionState = {
+      available,
+      selected,
+      details: typeof state.details === 'string'
+        ? state.details.slice(0, 3000)
+        : '表情モーフの診断結果がありません'
+    };
   });
   ipcMain.on('avatar:idle-status', (event, diagnostic) => {
     if (!isOurWindow(event) || typeof diagnostic !== 'string') return;
