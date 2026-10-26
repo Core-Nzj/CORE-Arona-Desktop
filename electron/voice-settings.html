@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'none'; connect-src 'none'; base-uri 'none'; form-action 'none'">
+<title>VoiSona Talk 設定</title>
+<style>
+:root { font-family: "Yu Gothic UI", "Meiryo", sans-serif; color-scheme: light; background:#f6f8fb; color:#1a2733; font-size:14px; }
+body { margin:0; padding:24px; }
+h1 { margin:0 0 9px; font-size:19px; font-weight:650; }
+p { margin:0 0 15px; line-height:1.7; color:#495b6b; }
+label { display:block; font-weight:600; margin:12px 0 6px; }
+input { box-sizing:border-box; padding:10px 12px; border-radius:7px; border:1px solid #b7c7d2; background:white; width:100%; font-size:14px; }
+input:focus { border-color:#00aab9; outline:2px solid #bceff3; }
+button { padding:9px 13px; border:1px solid #a7bbc9; border-radius:7px; background:white; cursor:pointer; font-size:13px; }
+button.primary { background:#008c9b; color:white; border-color:#008c9b; }
+button.danger { color:#8d3131; border-color:#d8a6a6; }
+button:disabled { opacity:.5; cursor:progress; }
+.actions { display:flex; gap:9px; flex-wrap:wrap; margin:20px 0 13px; }
+#status { padding:10px 12px; border-radius:7px; background:#e7f1f5; min-height:18px; white-space:pre-wrap; font-size:12px; line-height:1.5; overflow-wrap:anywhere; }
+.note { color:#5d6d79; font-size:12px; margin-top:10px; }
+</style>
+</head>
+<body>
+<h1>VoiSona Talk 接続設定</h1>
+<p>VoiSona Talkの<strong>編集 → 環境設定 → API</strong>で設定したユーザー名とAPI用パスワードを入力してください。ログイン用パスワードは使いません。</p>
+<form id="credentials">
+<label for="username">APIユーザー名（登録メールアドレス）</label>
+<input id="username" name="username" type="email" autocomplete="off" maxlength="254" required>
+<label for="password">API用パスワード</label>
+<input id="password" name="password" type="password" autocomplete="new-password" maxlength="1024" placeholder="保存済みなら空欄で維持">
+<div class="actions">
+<button type="submit" class="primary" id="save">暗号化して保存・接続確認</button>
+<button type="button" id="connect">Proxyを起動・再接続</button>
+<button type="button" class="danger" id="clear">認証情報を削除</button>
+</div>
+</form>
+<div id="status" role="status" aria-live="polite">確認中...</div>
+<p class="note">Proxyは起動時にアプリから自動起動します。現在の開発版はPython 3.11以降と <code>voisona-talk-proxy</code> が必要です。認証情報はWindowsの暗号化機能でローカル保存し、GitHubへ送信しません。</p>
+<script src="./voice-settings.js"></script>
+</body>
+</html>
