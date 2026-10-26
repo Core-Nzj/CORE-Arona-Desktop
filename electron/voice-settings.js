@@ -7,6 +7,7 @@ const status = document.querySelector('#status');
 const save = document.querySelector('#save');
 const connect = document.querySelector('#connect');
 const clear = document.querySelector('#clear');
+const browserFill = document.querySelector('#browser-fill');
 
 function display(info, message = '') {
   const proxy = info?.proxy || {};
@@ -37,6 +38,7 @@ function busy(pending) {
   save.disabled = pending;
   connect.disabled = pending;
   clear.disabled = pending;
+  browserFill.disabled = pending;
 }
 
 form.addEventListener('submit', async event => {
@@ -74,6 +76,22 @@ clear.addEventListener('click', async () => {
   } catch (error) {
     await refresh('削除できませんでした: ' + (error?.message || error));
   } finally { busy(false); }
+});
+
+browserFill.addEventListener('click', async () => {
+  busy(true);
+  status.textContent = 'ブラウザーに安全な一時入力フォームを開いています...';
+  try {
+    await window.voiceSettings.openBrowserAutofill();
+    await refresh('ブラウザーでAPIパスワードを入力してください（フォームは3分間有効です）。');
+  } catch (error) {
+    await refresh('ブラウザーを開けませんでした: ' + String(error?.message || error));
+  } finally { busy(false); }
+});
+
+window.voiceSettings.onCredentialsImported(() => {
+  passwordInput.value = '';
+  void refresh('ブラウザーから認証情報を安全に保存しました。');
 });
 
 void refresh();
