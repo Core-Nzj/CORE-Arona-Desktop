@@ -7,9 +7,10 @@
 // Security:
 // - listens ONLY on IPv4 loopback; never reachable from other machines
 // - unpredictable one-time URL token, expires after 3 minutes
-// - GET/POST must match Host and unguessable path token; POST uses a separate
-//   per-session CSRF token and rejects cross-site requests. The Origin header
-//   can be omitted by privacy tools; its absence alone must not break saves.
+// - GET/POST must match Host and unguessable path token. POST also requires
+//   a second, independent 256-bit token embedded in the fetched form.
+//   Browser Origin / Sec-Fetch-Site headers are not trusted for decisions:
+//   privacy extensions and browser navigation may rewrite them.
 // - no external scripts, subresources, redirects, third-party requests or logs
 // - sends username/password solely to the in-process credential store
 // - the password never appears in the URL, renderer IPC, or the response
@@ -156,19 +157,16 @@ class BrowserCredentialPortal {
       return;
     }
     const contentType = req.headers['content-type'] || '';
-    const requestOrigin = req.headers.origin;
-    const fetchSite = req.headers['sec-fetch-site'];
-    const methodOk = req.method === 'POST';
-    const typeOk = /^application\/x-www-form-urlencoded(?:;|$)/i.test(contentType);
-    // Chromium normally includes Origin with an HTML POST, but privacy
-    // extensions can remove it. The separate hidden CSRF token below still
-    // authenticates a legitimate form that lacks Origin.
-    const sourceOk = (!requestOrigin || requestOrigin === this.origin) &&
-      (fetchSite === undefined || fetchSite === 'same-origin' ||
-       fetchSite === 'none');
-    if (!methodOk || !typeOk || !sourceOk) {
-      const reason = !methodOk ? 'POST以外の方式です' :
-        !typeOk ? 'フォーム形式が一致しません' : '送信元が一致しません';
+    // The caller must possess BOTH the unpredictable URL token and the
+    // independent, one-time form token checked below. Browsers may send
+    // Origin: null or unexpected Fetch Metadata even for legitimate posts.
+    // Since cross-origin sites cannot read our HTML/form token (no CORS),
+    // checking these unreliable headers adds breakage but not a necessary
+    // security boundary. Never log request headers or the submitted secret.
+    if (req.method !== 'POST' ||
+        !/^application\/x-www-form-urlencoded(?:;|$)/i.test(contentType)) {
+      const reason = req.method !== 'POST' ? 'POST以外の方式です' :
+        'フォーム形式が一致しません';
       this.reply(res, 403, page({
         action: route, csrfToken: this.csrfToken,
         error: '送信を受け付けられませんでした（' + reason +
