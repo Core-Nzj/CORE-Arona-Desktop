@@ -15,6 +15,7 @@ const SHIFT_JIS = Object.freeze({
   'まばたき': '82dc82ce82bd82ab'
 });
 export const IDLE_FRAMES = 360; // 12 seconds at the MMD standard 30 fps
+export const IDLE_ARM_ANGLE_DEGREES = 50; // Conservative angle for varied A/T-pose rigs
 
 const TAU = Math.PI * 2;
 const toRadians = degrees => degrees * Math.PI / 180;
@@ -59,14 +60,15 @@ function standardBoneFrames(name) {
 
     let rotation = [0, 0, 0, 1];
     if (name === '左腕' || name === 'LeftArm') {
-      // From T-pose to arms hanging roughly 17 degrees away from the body.
-      rotation = quatForZ(-toRadians(73) + 0.016 * Math.sin(phase));
+      // Apply a moderate down-rotation. The former 73° rotation could place
+      // hands behind the hips on a model whose rest pose already slopes down.
+      rotation = quatForZ(-toRadians(IDLE_ARM_ANGLE_DEGREES) + 0.012 * Math.sin(phase));
     } else if (name === '右腕' || name === 'RightArm') {
-      rotation = quatForZ(toRadians(73) - 0.016 * Math.sin(phase));
+      rotation = quatForZ(toRadians(IDLE_ARM_ANGLE_DEGREES) - 0.012 * Math.sin(phase));
     } else if (name === '左ひじ' || name === 'LeftElbow') {
-      rotation = quatForY(-0.065);
+      rotation = quatForY(-0.018);
     } else if (name === '右ひじ' || name === 'RightElbow') {
-      rotation = quatForY(0.065);
+      rotation = quatForY(0.018);
     } else if (name === '上半身' || name === 'UpperBody') {
       rotation = quatForX(0.010 + 0.012 * Math.sin(phase));
     } else if (name === '上半身2' || name === 'UpperBody2') {
