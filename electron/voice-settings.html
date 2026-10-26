@@ -27,16 +27,18 @@ button:disabled { opacity:.5; cursor:progress; }
 <p>VoiSona Talkの<strong>編集 → 環境設定 → API</strong>で設定したユーザー名とAPI用パスワードを入力してください。ログイン用パスワードは使いません。</p>
 <form id="credentials">
 <label for="username">APIユーザー名（登録メールアドレス）</label>
-<input id="username" name="username" type="email" autocomplete="off" maxlength="254" required>
+<input id="username" name="username" type="email" autocomplete="username" maxlength="254" required>
 <label for="password">API用パスワード</label>
-<input id="password" name="password" type="password" autocomplete="new-password" maxlength="1024" placeholder="保存済みなら空欄で維持">
+<input id="password" name="password" type="password" autocomplete="current-password" maxlength="1024" placeholder="保存済みなら空欄で維持">
 <div class="actions">
 <button type="submit" class="primary" id="save">暗号化して保存・接続確認</button>
+<button type="button" id="browser-fill">ブラウザーでパスワード入力（Google / iCloud）</button>
 <button type="button" id="connect">Proxyを起動・再接続</button>
 <button type="button" class="danger" id="clear">認証情報を削除</button>
 </div>
 </form>
 <div id="status" role="status" aria-live="polite">確認中...</div>
+<p class="note">「ブラウザーでパスワード入力」を押すと、既定のChromeやEdgeなどでこのPC内だけの入力ページを開きます。GoogleパスワードマネージャーやiCloudパスワード拡張機能が使えますが、以前に保存したサイトと一致しない場合は手動選択やコピーが必要です。フォームは3分で閉じます。</p>
 <p class="note">Proxyは起動時にアプリから自動起動します。現在の開発版はPython 3.11以降と <code>voisona-talk-proxy</code> が必要です。認証情報はWindowsの暗号化機能でローカル保存し、GitHubへ送信しません。</p>
 <script src="./voice-settings.js"></script>
 </body>
