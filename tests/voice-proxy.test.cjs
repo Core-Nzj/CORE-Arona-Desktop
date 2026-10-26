@@ -102,3 +102,25 @@ test('does not persist or send credentials and rejects invalid voices', async ()
   assert.equal(payloads[0].body.includes('password'), false);
   assert.equal(normalizeVoice({ voice_name: '', languages: ['ja_JP'] }), null);
 });
+
+
+test('sends GUI-supplied API credentials via Basic auth and never in the URL or body', async () => {
+  const seen = [];
+  const client = new VoiceProxyClient(async (url, options) => {
+    seen.push({ url, headers: options.headers || {}, body: options.body || '' });
+    if (url.endsWith('/voices')) {
+      return new Response(JSON.stringify({ items: [sampleVoice] }), { status: 200 });
+    }
+    return new Response(makeWav(), { status: 200 });
+  });
+  client.setCredentials({ username: 'voice@example.jp', password: 'secret-api-only' });
+  await client.listVoices();
+  await client.synthesize('こんにちは', sampleVoice);
+  const expected = 'Basic ' + Buffer.from('voice@example.jp:secret-api-only').toString('base64');
+  assert.ok(seen.every(item => item.headers.Authorization === expected));
+  assert.ok(seen.every(item => !item.url.includes('voice@example.jp')));
+  assert.ok(seen.every(item => !item.body.includes('secret-api-only')));
+  client.setCredentials(null);
+  await client.listVoices();
+  assert.equal(seen.at(-1).headers.Authorization, undefined);
+});
