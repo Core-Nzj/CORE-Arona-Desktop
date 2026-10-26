@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld('aronaDesktop', Object.freeze({
   chooseModel: () => ipcRenderer.invoke('avatar:choose'),
   quit: () => ipcRenderer.send('avatar:quit'),
   showMenu: () => ipcRenderer.send('avatar:menu'),
+  reportIdleStatus: (text) => ipcRenderer.send('avatar:idle-status', text),
   startDrag: () => ipcRenderer.send('avatar:drag-start'),
   stopDrag: () => ipcRenderer.send('avatar:drag-stop'),
   setAvatarRegion: (rect) => ipcRenderer.send('avatar:set-region', rect),
