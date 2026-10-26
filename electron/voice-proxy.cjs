@@ -38,11 +38,28 @@ class VoiceProxyClient {
     if (typeof fetchImpl !== 'function') throw new TypeError('fetch is required');
     this.fetchImpl = fetchImpl;
     this.lastWavInfo = 'WAVはまだ生成されていません';
+    this.credentials = null;
+  }
+
+  setCredentials(credentials) {
+    this.credentials = credentials
+      ? { username: credentials.username, password: credentials.password }
+      : null;
+  }
+
+  authorization() {
+    if (!this.credentials) return {};
+    return {
+      Authorization: 'Basic ' + Buffer.from(
+        this.credentials.username + ':' + this.credentials.password, 'utf8'
+      ).toString('base64')
+    };
   }
 
   async listVoices() {
     const response = await this.fetchImpl(PROXY_ORIGIN + '/voices', {
       method: 'GET',
+      headers: this.authorization(),
       signal: AbortSignal.timeout(7000)
     });
     requireSuccess(response, '/voices');
@@ -70,7 +87,7 @@ class VoiceProxyClient {
     const timeout = AbortSignal.timeout(60000);
     const response = await this.fetchImpl(PROXY_ORIGIN + '/speech-syntheses', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...this.authorization() },
       body: JSON.stringify(payload),
       signal: signal ? AbortSignal.any([signal, timeout]) : timeout
     });
