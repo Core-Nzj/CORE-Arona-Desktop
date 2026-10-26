@@ -211,8 +211,11 @@ async function attachIdleMotion(container) {
     }
     return runtimeModel;
   } catch (error) {
-    mmdRuntime.destroyMmdModel(runtimeModel);
-    throw error;
+    // MmdRuntime takes ownership of skeleton resources. Destroying it here
+    // could also invalidate an otherwise successfully rendered Phase 1 model.
+    // Keep the runtime model alive until the user changes the model or quits.
+    console.warn('Idle motion could not be attached; model remains visible:', error);
+    return runtimeModel;
   }
 }
 
