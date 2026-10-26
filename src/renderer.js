@@ -50,8 +50,10 @@ const keyLight = new DirectionalLight('key', new Vector3(-0.6, -1, 0.8), scene);
 keyLight.intensity = 0.65;
 
 const mmdRuntime = new MmdRuntime(scene, null);
+mmdRuntime.loggingEnabled = true;
 mmdRuntime.register(scene);
 const idleLoader = new VmdLoader(scene);
+idleLoader.loggingEnabled = true;
 
 let activeContainer = null;
 let activeMmdModel = null;
@@ -63,6 +65,16 @@ let hitRegion = null;
 let dragPointerId = null;
 let lastSilhouetteUpdate = 0;
 let isSeekingIdleLoop = false;
+let idleInfo = '待機モーションの読込待ち';
+let observedFrameTime = 0;
+let idlePlaybackCheckTimer = null;
+
+function reportIdle(message) {
+  idleInfo = String(message);
+  console.info('[CORE idle]', idleInfo);
+  window.aronaDesktop.reportIdleStatus(idleInfo);
+}
+
 const alphaCanvas = document.createElement('canvas');
 const alphaContext = alphaCanvas.getContext('2d', { willReadFrequently: true });
 
@@ -184,47 +196,57 @@ function applyAvatarRegion() {
 }
 
 async function attachIdleMotion(container) {
-  // PMX loader exposes the MMD skinned root as the first mesh.
-  // Keep this model instance in MmdRuntime rather than modifying Babylon bones
-  // directly, which can break MMD IK and morph calculations.
   const rootMesh = container.meshes[0];
-  if (!rootMesh) throw new Error('MMD root mesh was not found');
+  if (!rootMesh) throw new Error('MMD root mesh is not available');
 
   const runtimeModel = mmdRuntime.createMmdModel(rootMesh, { buildPhysics: false });
-  try {
-    const boneNames = runtimeModel.runtimeBones.map(bone => b.name);
-    const morphNames = ['まばたき', 'blink', 'Blink'].filter(name => {
-      return Boolean(runtimeModel.morph.getMorphIndices(name)?.length);
-    });
+  const boneNames = runtimeModel.runtimeBones.map(bone => bone.name);
+  const morphNames = ['まばたき', 'blink', 'Blink'].filter(name =>
+    (runtimeModel.morph.getMorphIndices(name)?.length ?? 0) > 0
+  );
+  const armNames = ['左腕', '右腕', 'LeftArm', 'RightArm'];
+  const foundArms = armNames.filter(name => boneNames.includes(name));
+  const boneSample = boneNames.slice(0, 28).join(', ');
 
+  const details = [
+    '対応腕ボーン: ' + (foundArms.join(' / ') || 'なし'),
+    'まばたきモーフ: ' + (morphNames.join(' / ') || 'なし'),
+    '検出ボーン数: ' + boneNames.length,
+    'ボーン例: ' + boneSample
+  ].join('\n');
+
+  reportIdle('MMDランタイムを生成しました\n' + details);
+
+  try {
+    // The model is kept local. Our original 12-second motion is created at
+    // runtime rather than shipping someone else's VMD motion data.
     const buffer = buildIdleVmd({ boneNames, morphNames });
     const animation = await idleLoader.loadFromBufferAsync('CORE idle', buffer);
+    const boneTracks = animation.boneTracks?.length ?? 0;
+    const movableTracks = animation.movableBoneTracks?.length ?? 0;
+    const morphTracks = animation.morphTracks?.length ?? 0;
+    reportIdle('生成VMD解析完了 (骨 ' + boneTracks + ', 移動骨 ' +
+      movableTracks + ', 表情 ' + morphTracks + ')\n' + details);
+
+    if (boneTracks + movableTracks + morphTracks === 0) {
+      throw new Error('生成モーションのトラック数が0です。標準骨名と表情名の不一致が考えられます');
+    }
+
     const handle = runtimeModel.createRuntimeAnimation(animation);
     runtimeModel.setRuntimeAnimation(handle);
-
-    if (!boneNames.includes('左腕') && !boneNames.includes('右腕') &&
-      !boneNames.includes('LeftArm') && !boneNames.includes('RightArm')) {
-      console.warn('Idle pose: no standard upper-arm bones found; keeping model rest pose');
-    }
-    if (morphNames.length === 0) {
-      console.info('Idle blink: model does not provide a supported blink morph');
-    }
-    return runtimeModel;
-  } catch (error) {
-    // MmdRuntime takes ownership of skeleton resources. Destroying it here
-    // could also invalidate an otherwise successfully rendered Phase 1 model.
-    // Keep the runtime model alive until the user changes the model or quits.
-    console.warn('Idle motion could not be attached; model remains visible:', error);
-    return runtimeModel;
-  }
-}
-
-async function startIdlePlayback() {
-  try {
+    mmdRuntime.setManualAnimationDuration(IDLE_FRAMES);
     await mmdRuntime.seekAnimation(0, true);
     await mmdRuntime.playAnimation();
+
+    reportIdle('再生開始 (骨 ' + boneTracks + ', 移動骨 ' +
+      movableTracks + ', 表情 ' + morphTracks + ')\n' + details);
+    return runtimeModel;
   } catch (error) {
-    console.warn('Unable to start idle motion', error);
+    reportIdle('待機モーション初期化失敗: ' + String(error?.stack ?? error) +
+      '\n' + details);
+    // Do not destroy the runtime wrapper here because ownership of the
+    // underlying skeleton has already moved to MmdRuntime.
+    return runtimeModel;
   }
 }
 
@@ -233,6 +255,7 @@ async function loadModel(model) {
   const seq = ++loadSequence;
   chooseButton.disabled = true;
   showStatus('読み込み中: ' + model.name);
+  reportIdle('モデルを読み込み中: ' + model.name);
   let nextContainer;
   let nextMmdModel = null;
 
@@ -281,9 +304,27 @@ async function loadModel(model) {
       // Keep the proven Phase 1 model display even when a custom PMX rig
       // cannot be animated. The app is still usable.
       console.warn('Idle motion unavailable; static model retained:', idleError);
+      reportIdle('アニメーションの初期化例外: ' + String(idleError?.stack ?? idleError));
     }
     activeMmdModel = nextMmdModel;
-    if (activeMmdModel) void startIdlePlayback();
+    if (activeMmdModel) {
+      // Verify that the runtime's clock actually advances after activation.
+      // If the loader silently failed, the right-click diagnostics will say so.
+      if (idlePlaybackCheckTimer !== null) clearTimeout(idlePlaybackCheckTimer);
+      const observedModel = activeMmdModel;
+      const frameStart = mmdRuntime.currentFrameTime;
+      idlePlaybackCheckTimer = setTimeout(() => {
+        if (activeMmdModel !== observedModel) return;
+        const progress = mmdRuntime.currentFrameTime - frameStart;
+        if (!mmdRuntime.isAnimationPlaying || progress <= 1) {
+          reportIdle(idleInfo + '\n警告: アニメーション時計が進んでいません（' +
+            frameStart.toFixed(1) + ' → ' + mmdRuntime.currentFrameTime.toFixed(1) + '）');
+        } else {
+          reportIdle(idleInfo + '\n再生時計: 正常に進行 (' +
+            frameStart.toFixed(1) + ' → ' + mmdRuntime.currentFrameTime.toFixed(1) + ')');
+        }
+      }, 1800);
+    }
     placeholder.hidden = true;
     regionDirty = true;
   } catch (error) {
