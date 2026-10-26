@@ -18,6 +18,8 @@ function display(info, message = '') {
     ? (proxy.managed ? 'このアプリで起動中' : '既存プロセスに接続中')
     : '未接続'));
   if (proxy.error) lines.push('接続詳細: ' + proxy.error);
+  lines.push('音声ライブラリ: ' + (info?.voice?.count ?? 0) + '件');
+  if (info?.voice?.error) lines.push('VoiSona Talk: ' + info.voice.error);
   if (info?.error) lines.push('認証情報: ' + info.error);
   status.textContent = lines.join('\n');
   if (info?.username) userInput.value = info.username;
