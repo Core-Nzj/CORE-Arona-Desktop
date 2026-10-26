@@ -73,6 +73,7 @@ function voiceDiagnostics() {
     '検出されたライブラリ数: ' + voiceEntries.length,
     '使用音声: ' + (selectedVoiceName ?? '未設定'),
     '再生状態: ' + voicePlaybackStatus,
+    '音声形式: ' + voiceClient.lastWavInfo,
     '',
     '前提: VoiSona Talk起動・REST API有効・Proxy起動',
     '推奨Proxy起動: py -m voisona_talk_proxy --host 127.0.0.1 --port 32777',
@@ -449,6 +450,7 @@ app.whenReady().then(async () => {
     voiceSynthesis = controller;
     try {
       const bytes = await voiceClient.synthesize(text, voice, controller.signal);
+      console.info('[CORE speech] normalized:', voiceClient.lastWavInfo);
       if (controller.signal.aborted) throw new Error('古い音声リクエストを中断しました');
       return { wavBase64: bytes.toString('base64'), voiceName: voice.voice_name };
     } catch (error) {
