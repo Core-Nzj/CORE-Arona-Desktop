@@ -32,7 +32,6 @@ protocol.registerSchemesAsPrivileged([{
 
 let mainWindow;
 let currentModelFile = null;
-let clickThrough = false;
 
 function infoForCurrentModel() {
   if (!currentModelFile) return null;
@@ -116,17 +115,28 @@ function isOurWindow(event) {
   return mainWindow && !mainWindow.isDestroyed() && event.sender === mainWindow.webContents;
 }
 
-function setClickThrough(enabled) {
-  if (!mainWindow || mainWindow.isDestroyed() || enabled === clickThrough) return;
-  mainWindow.setIgnoreMouseEvents(enabled, enabled ? { forward: true } : {});
-  clickThrough = enabled;
+function setAvatarRegion(rect) {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (rect === null) {
+    mainWindow.setShape([]);
+    return;
+  }
+
+  const values = [rect?.x, rect?.y, rect?.width, rect?.height];
+  if (!values.every(Number.isFinite)) return;
+  const [windowWidth, windowHeight] = mainWindow.getContentSize();
+  const x = Math.max(0, Math.min(windowWidth - 1, Math.floor(rect.x)));
+  const y = Math.max(0, Math.min(windowHeight - 1, Math.floor(rect.y)));
+  const width = Math.max(1, Math.min(windowWidth - x, Math.ceil(rect.width)));
+  const height = Math.max(1, Math.min(windowHeight - y, Math.ceil(rect.height)));
+
+  // Windows hit testing now occurs in the OS. Outside this rectangle,
+  // clicks go to other apps while the avatar still receives input.
+  mainWindow.setShape([{ x, y, width, height }]);
 }
 
 function showAvatarMenu() {
   if (!mainWindow || mainWindow.isDestroyed()) return;
-  // The menu itself must be able to receive pointer events.
-  setClickThrough(false);
-
   const zoom = action => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('avatar:zoom', action);
@@ -180,7 +190,6 @@ function createWindow() {
     }
   });
 
-  clickThrough = false;
   mainWindow.setMenuBarVisibility(false);
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   mainWindow.webContents.on('will-navigate', event => event.preventDefault());
@@ -200,13 +209,11 @@ app.whenReady().then(async () => {
   ipcMain.on('avatar:menu', event => {
     if (isOurWindow(event) && currentModelFile) showAvatarMenu();
   });
-  ipcMain.on('avatar:click-through', (event, enabled) => {
-    if (isOurWindow(event) && typeof enabled === 'boolean') {
-      setClickThrough(enabled);
-    }
+  ipcMain.on('avatar:set-region', (event, rect) => {
+    if (isOurWindow(event)) setAvatarRegion(rect);
   });
   ipcMain.on('avatar:move-by', (event, dx, dy) => {
-    if (!isOurWindow(event) || clickThrough || !Number.isFinite(dx) || !Number.isFinite(dy)) return;
+    if (!isOurWindow(event) || !Number.isFinite(dx) || !Number.isFinite(dy)) return;
     // A renderer may request only incremental movement, not arbitrary coordinates.
     if (Math.abs(dx) > 100 || Math.abs(dy) > 100) return;
     const [x, y] = mainWindow.getPosition();
