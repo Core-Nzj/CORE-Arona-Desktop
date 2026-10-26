@@ -4,6 +4,7 @@ const { app, BrowserWindow, dialog, ipcMain, Menu, protocol, screen } = require(
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { resolveAssetPath } = require('./asset-path.cjs');
+const { VoiceProxyClient, PROXY_ORIGIN } = require('./voice-proxy.cjs');
 
 const SCHEME = 'arona-avatar';
 const ALLOWED_EXTENSIONS = new Set([
@@ -35,6 +36,45 @@ let currentModelFile = null;
 let dragTimer = null;
 let dragStart = null;
 let idleDiagnostics = 'モーションの読み込みを待っています';
+const voiceClient = new VoiceProxyClient();
+let voiceEntries = [];
+let voiceError = '接続を確認していません';
+let selectedVoiceName = null;
+let voiceSynthesis = null;
+
+async function refreshVoices() {
+  try {
+    voiceEntries = await voiceClient.listVoices();
+    voiceError = voiceEntries.length ? '' : 'VoiSona Talkに音声ライブラリがありません';
+    if (voiceEntries.length && !voiceEntries.some(v => v.voice_name === selectedVoiceName)) {
+      selectedVoiceName = voiceEntries[0].voice_name;
+      await saveModelSelection();
+    }
+    return voiceEntries;
+  } catch (error) {
+    voiceEntries = [];
+    voiceError = String(error?.message ?? error);
+    return [];
+  }
+}
+
+function currentVoice() {
+  return voiceEntries.find(v => v.voice_name === selectedVoiceName) || null;
+}
+
+function voiceDiagnostics() {
+  return [
+    '接続先: ' + PROXY_ORIGIN,
+    '状態: ' + (voiceError || '接続成功'),
+    '検出されたライブラリ数: ' + voiceEntries.length,
+    '使用音声: ' + (selectedVoiceName ?? '未設定'),
+    '',
+    '前提: VoiSona Talk起動・REST API有効・Proxy起動',
+    '推奨Proxy起動: py -m voisona_talk_proxy --host 127.0.0.1 --port 32777',
+    'Proxyには事前にVoiSonaの認証情報を設定してください。',
+    'このアプリはVoiSonaの認証情報を保存しません。'
+  ].join('\n');
+}
 const EMOTION_OPTIONS = Object.freeze([
   { id: 'neutral', label: '通常' },
   { id: 'happy', label: '笑顔' },
@@ -63,6 +103,7 @@ function settingsFile() {
 async function restoreModelSelection() {
   try {
     const settings = JSON.parse(await fs.readFile(settingsFile(), 'utf8'));
+    if (typeof settings.voiceName === 'string') selectedVoiceName = settings.voiceName;
     if (typeof settings.modelPath !== 'string') return;
     if (!['.pmx', '.pmd'].includes(path.extname(settings.modelPath).toLowerCase())) return;
     const stats = await fs.stat(settings.modelPath);
@@ -75,7 +116,7 @@ async function restoreModelSelection() {
 async function saveModelSelection() {
   const filepath = settingsFile();
   await fs.mkdir(path.dirname(filepath), { recursive: true });
-  await fs.writeFile(filepath, JSON.stringify({ modelPath: currentModelFile }, null, 2), 'utf8');
+  await fs.writeFile(filepath, JSON.stringify({ modelPath: currentModelFile, voiceName: selectedVoiceName }, null, 2), 'utf8');
 }
 
 async function handleModelAsset(request) {
@@ -198,6 +239,69 @@ function showAvatarMenu() {
     }
   };
 
+  const voiceSubmenu = [
+    {
+      label: voiceError ? '未接続（更新してください）' : '接続中',
+      enabled: false
+    },
+    { type: 'separator' },
+    {
+      label: '接続・音声一覧を更新',
+      click: async () => {
+        await refreshVoices();
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          await dialog.showMessageBox(mainWindow, {
+            type: voiceError ? 'warning' : 'info',
+            title: 'VoiSona Talk Proxy',
+            message: voiceError || '音声ライブラリを検出しました',
+            detail: voiceDiagnostics(),
+            buttons: ['閉じる']
+          });
+        }
+      }
+    },
+    {
+      label: '使用する音声',
+      enabled: voiceEntries.length > 0,
+      submenu: voiceEntries.map(voice => ({
+        label: voice.voice_name,
+        type: 'radio',
+        checked: selectedVoiceName === voice.voice_name,
+        click: () => {
+          selectedVoiceName = voice.voice_name;
+          void saveModelSelection();
+        }
+      }))
+    },
+    { type: 'separator' },
+    {
+      label: 'テスト発話',
+      enabled: voiceEntries.length > 0,
+      click: () => mainWindow?.webContents.send('avatar:voice-test')
+    },
+    {
+      label: '再生停止',
+      click: () => {
+        if (voiceSynthesis) voiceSynthesis.abort();
+        mainWindow?.webContents.send('avatar:voice-stop');
+      }
+    },
+    { type: 'separator' },
+    {
+      label: '音声診断',
+      click: () => {
+        if (!mainWindow || mainWindow.isDestroyed()) return;
+        void dialog.showMessageBox(mainWindow, {
+          type: voiceError ? 'warning' : 'info',
+          title: 'VoiSona Talk Proxy',
+          message: '音声接続の状態',
+          detail: voiceDiagnostics(),
+          buttons: ['閉じる']
+        });
+      }
+    }
+  ];
+
   const menu = Menu.buildFromTemplate([
     {
       label: 'モデルを変更...',
@@ -211,6 +315,10 @@ function showAvatarMenu() {
           console.error('Unable to choose model from context menu:', error);
         }
       }
+    },
+    {
+      label: '音声（VoiSona Talk）',
+      submenu: voiceSubmenu
     },
     {
       label: '表情',
@@ -291,7 +399,7 @@ function createWindow() {
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   mainWindow.webContents.on('will-navigate', event => event.preventDefault());
   mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
-  mainWindow.on('closed', () => { stopAvatarDrag(); mainWindow = null; });
+  mainWindow.on('closed', () => { stopAvatarDrag(); voiceSynthesis?.abort(); mainWindow = null; });
 }
 
 app.whenReady().then(async () => {
@@ -325,6 +433,27 @@ app.whenReady().then(async () => {
         : '表情モーフの診断結果がありません'
     };
   });
+  ipcMain.handle('avatar:voice-synthesize', async (event, text) => {
+    if (!isOurWindow(event)) throw new Error('Unauthorized voice request');
+    const voice = currentVoice();
+    if (!voice) throw new Error('音声ライブラリが未選択です。右クリックから接続を更新してください');
+    if (voiceSynthesis) voiceSynthesis.abort();
+    const controller = new AbortController();
+    voiceSynthesis = controller;
+    try {
+      const bytes = await voiceClient.synthesize(text, voice, controller.signal);
+      if (controller.signal.aborted) throw new Error('古い音声リクエストを中断しました');
+      return { wavBase64: bytes.toString('base64'), voiceName: voice.voice_name };
+    } catch (error) {
+      if (controller.signal.aborted) throw new Error('古い音声リクエストを中断しました');
+      throw new Error('音声生成に失敗しました: ' + String(error?.message ?? error));
+    } finally {
+      if (voiceSynthesis === controller) voiceSynthesis = null;
+    }
+  });
+  ipcMain.on('avatar:voice-cancel', event => {
+    if (isOurWindow(event) && voiceSynthesis) voiceSynthesis.abort();
+  });
   ipcMain.on('avatar:idle-status', (event, diagnostic) => {
     if (!isOurWindow(event) || typeof diagnostic !== 'string') return;
     idleDiagnostics = diagnostic.slice(0, 3500);
@@ -340,6 +469,8 @@ app.whenReady().then(async () => {
   });
 
   createWindow();
+  // Startup must remain nonblocking when no voice engine is installed.
+  void refreshVoices();
 }).catch(error => {
   console.error('Unable to initialize desktop avatar:', error);
   app.quit();
