@@ -12,9 +12,9 @@ const sampleVoice = {
 };
 function makeWav() {
   // Minimal RIFF/WAVE header for an empty mono 16-bit PCM stream.
-  const wav = Buffer.alloc(44);
+  const wav = Buffer.alloc(46);
   wav.write('RIFF', 0, 'ascii');
-  wav.writeUInt32LE(36, 4);
+  wav.writeUInt32LE(38, 4);
   wav.write('WAVE', 8, 'ascii');
   wav.write('fmt ', 12, 'ascii');
   wav.writeUInt32LE(16, 16);
@@ -25,6 +25,8 @@ function makeWav() {
   wav.writeUInt16LE(2, 32);
   wav.writeUInt16LE(16, 34);
   wav.write('data', 36, 'ascii');
+  wav.writeUInt32LE(2, 40);
+  wav.writeInt16LE(1200, 44);
   return wav;
 }
 
@@ -53,6 +55,8 @@ test('synthesizes to validated WAV and sends correct voice request', async () =>
   });
   const data = await client.synthesize('こんにちは', sampleVoice);
   assert.equal(data.toString('ascii', 0, 4), 'RIFF');
+  assert.equal(data.readUInt16LE(34), 16);
+  assert.equal(data.readUInt32LE(40), 2);
   assert.equal(sent.url, PROXY_ORIGIN + '/speech-syntheses');
   assert.equal(sent.method, 'POST');
   assert.deepEqual(sent.payload, {
