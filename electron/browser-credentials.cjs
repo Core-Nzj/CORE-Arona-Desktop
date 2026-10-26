@@ -178,7 +178,9 @@ class BrowserCredentialPortal {
       this.used = true;
       await this.onCredentials(username, password);
       this.reply(res, 200, page({ success: true }));
-      setImmediate(() => this.close());
+      // Let the browser receive its confirmation before closing its socket.
+      const closeTimer = setTimeout(() => this.close(), 450);
+      closeTimer.unref?.();
     } catch (error) {
       this.used = false;
       // Errors shown to the user must never contain submitted secrets.
