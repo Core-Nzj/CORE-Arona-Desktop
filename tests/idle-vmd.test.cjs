@@ -78,3 +78,16 @@ test('only recognized target bones participate in the animation', async () => {
     assert.ok(Math.abs(length - 1) < 0.00001);
   }
 });
+
+test('idle arms use a moderate symmetric angle instead of folding behind the hips', async () => {
+  const { buildIdleVmd, IDLE_ARM_ANGLE_DEGREES } = await loadBuilder();
+  const parsed = readVmd(buildIdleVmd({ boneNames: ['左腕', '右腕'] }));
+  const left = parsed.bones[0].q;
+  const right = parsed.bones[13].q;
+  const leftDegrees = 2 * Math.asin(Math.abs(left[2])) * 180 / Math.PI;
+  const rightDegrees = 2 * Math.asin(Math.abs(right[2])) * 180 / Math.PI;
+  assert.ok(IDLE_ARM_ANGLE_DEGREES <= 55);
+  assert.ok(Math.abs(leftDegrees - IDLE_ARM_ANGLE_DEGREES) < 0.1);
+  assert.ok(Math.abs(rightDegrees - IDLE_ARM_ANGLE_DEGREES) < 0.1);
+  assert.ok(left[2] < 0 && right[2] > 0);
+});
