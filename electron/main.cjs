@@ -1,12 +1,13 @@
 'use strict';
 
-const { app, BrowserWindow, dialog, ipcMain, Menu, protocol, screen, safeStorage } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, Menu, protocol, screen, safeStorage, shell } = require('electron');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { resolveAssetPath } = require('./asset-path.cjs');
 const { VoiceProxyClient, PROXY_ORIGIN } = require('./voice-proxy.cjs');
 const { VoiceCredentialStore } = require('./voice-credentials.cjs');
 const { ProxyManager } = require('./proxy-manager.cjs');
+const { BrowserCredentialPortal } = require('./browser-credentials.cjs');
 
 // Desktop speech may start from a native context-menu action.
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
@@ -40,6 +41,7 @@ let mainWindow;
 let settingsWindow = null;
 const proxyManager = new ProxyManager();
 let credentialStore = null;
+let browserCredentialPortal = null;
 let credentials = null;
 let credentialsError = '';
 let proxyStartup = null;
@@ -533,6 +535,10 @@ app.whenReady().then(async () => {
     await startProxyAndRefresh();
     return voiceSettingsStatus();
   });
+  ipcMain.handle('voice-settings:browser-autofill', async event => {
+    if (!isSettingsWindow(event)) throw new Error('Unauthorized settings window');
+    return browserCredentialPortal.open();
+  });
   ipcMain.handle('voice-settings:clear', async event => {
     if (!isSettingsWindow(event)) throw new Error('Unauthorized settings window');
     await credentialStore.clear();
@@ -591,6 +597,20 @@ app.whenReady().then(async () => {
   credentialStore = new VoiceCredentialStore({
     safeStorage, userDataPath: app.getPath('userData')
   });
+  browserCredentialPortal = new BrowserCredentialPortal({
+    openExternal: url => shell.openExternal(url),
+    onCredentials: async (username, password) => {
+      const saved = await credentialStore.write(username, password);
+      credentials = saved;
+      credentialsError = '';
+      voiceClient.setCredentials(saved);
+      // Inform settings modal without ever returning the password to HTML.
+      if (settingsWindow && !settingsWindow.isDestroyed()) {
+        settingsWindow.webContents.send('voice-settings:credentials-imported');
+      }
+      void refreshVoices();
+    }
+  });
   try {
     credentials = await credentialStore.read();
     voiceClient.setCredentials(credentials);
@@ -606,5 +626,5 @@ app.whenReady().then(async () => {
   app.quit();
 });
 
-app.on('before-quit', () => proxyManager.stop());
+app.on('before-quit', () => { browserCredentialPortal?.close(); proxyManager.stop(); });
 app.on('window-all-closed', () => app.quit());
