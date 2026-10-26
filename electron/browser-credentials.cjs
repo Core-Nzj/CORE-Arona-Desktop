@@ -46,7 +46,8 @@ function page({ action = '', error = '', success = false } = {}) {
     '<label for="password">API用パスワード</label>' +
     '<input id="password" name="password" type="password" autocomplete="current-password" required maxlength="1024">' +
     '<button type="submit">暗号化してアプリに保存</button></form>' +
-    '<p class="note">パスワード候補が出ない場合、保存先のサイトが異なる可能性があります。パスワード管理ツールからコピーして貼り付けることもできます。ここではVoiSonaのログインパスワードではなくAPI用パスワードを入力してください。</p>';
+    '<p class="note">パスワード候補が出ない場合、保存先のサイトが異なる可能性があります。パスワード管理ツールから検索してコピー・貼り付けしてください。API用パスワードを入力し、アカウントログイン用パスワードは使用しないでください。</p>' +
+    '<p class="note"><a href="https://passwords.google.com/" target="_blank" rel="noopener noreferrer">Googleパスワードを開く</a> / <a href="https://support.apple.com/ja-jp/guide/icloud-windows/icw2babf5e03/icloud" target="_blank" rel="noopener noreferrer">iCloudパスワードの利用方法</a></p>';
   return '<!doctype html><html lang="ja"><head><meta charset="utf-8">' +
     '<meta name="viewport" content="width=device-width,initial-scale=1">' +
     '<title>CORE Arona Desktop: VoiSona Talk</title>' +
@@ -174,7 +175,12 @@ class BrowserCredentialPortal {
         username: fields.get('username'),
         password: fields.get('password')
       });
-      // Reject concurrent duplicate submissions.
+      // Reject concurrent duplicate submissions even if two request bodies
+      // arrived concurrently before either one was fully read.
+      if (this.used) {
+        this.reply(res, 409, page({ error: 'この入力フォームは使用済みです' }));
+        return;
+      }
       this.used = true;
       await this.onCredentials(username, password);
       this.reply(res, 200, page({ success: true }));
