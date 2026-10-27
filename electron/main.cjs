@@ -14,6 +14,7 @@ const { ProxyManager } = require('./proxy-manager.cjs');
 const { BrowserCredentialPortal } = require('./browser-credentials.cjs');
 const { SpeechBridge } = require('./speech-bridge.cjs');
 const { readSpeechText, copySpeechToken } = require('./clipboard-actions.cjs');
+const { voiceKey, globalParameters } = require('./speech-settings.cjs');
 
 // Desktop speech may start from a native context-menu action.
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
@@ -140,6 +141,88 @@ async function refreshVoices() {
     voiceError = String(error?.message ?? error);
     return [];
   }
+}
+
+function resolveSelectedVoice(preference) {
+  if (preference?.voice_name && typeof preference.voice_name === 'string') {
+    const matching = voiceEntries.find(entry =>
+      entry.voice_name === preference.voice_name &&
+      (!preference.voice_version || entry.voice_version === preference.voice_version));
+    if (matching) return matching;
+  }
+  return currentVoice();
+}
+
+function isVoiceCommandWindowReady() {
+  return mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isLoading();
+}
+
+async function handleSpeechCommand(command) {
+  if (!command || typeof command.type !== 'string') throw new Error('不正な音声連携コマンドです');
+  if (command.type === 'PING_PROXY') {
+    return { ok: true, data: { running: await proxyManager.isAvailable(), bridge: true } };
+  }
+  if (command.type === 'GET_VOICES') {
+    await startProxyAndRefresh();
+    if (voiceError) throw new Error(voiceError);
+    return { ok: true, data: { items: voiceEntries } };
+  }
+  if (command.type === 'GET_STYLE_META') {
+    const voiceName = command.voice_name;
+    const voiceVersion = command.voice_version;
+    if (typeof voiceName !== 'string' || !voiceName || voiceName.length > 160 ||
+        typeof voiceVersion !== 'string' || !voiceVersion || voiceVersion.length > 160) {
+      throw new Error('ボイス名とバージョンが必要です');
+    }
+    const username = command.username || credentials?.username;
+    const password = command.password || credentials?.password;
+    if (typeof username !== 'string' || typeof password !== 'string' ||
+        !username || !password || username.length > 254 || password.length > 1024) {
+      throw new Error('VoiSona API認証情報をデスクトップ側で設定してください');
+    }
+    const url = 'http://127.0.0.1:32766/api/talk/v1/voices/' +
+      encodeURIComponent(voiceName) + '/' + encodeURIComponent(voiceVersion);
+    const response = await fetch(url, {
+      headers: { Authorization: 'Basic ' +
+        Buffer.from(username + ':' + password, 'utf8').toString('base64') },
+      signal: AbortSignal.timeout(8000)
+    });
+    if (!response.ok) throw new Error('VoiSona API HTTP ' + response.status);
+    const info = await response.json();
+    const data = info?.data || info;
+    if (!Array.isArray(data.style_names)) throw new Error('VoiSona APIからスタイル一覧を取得できません');
+    return { ok: true, data: {
+      style_names: data.style_names.filter(name => typeof name === 'string').slice(0, 30),
+      default_style_weights: Array.isArray(data.default_style_weights)
+        ? data.default_style_weights.slice(0, 30) : []
+    } };
+  }
+  if (!['SPEAK', 'STREAM_START', 'STREAM_APPEND', 'STREAM_END', 'STOP'].includes(command.type)) {
+    throw new Error('未対応の音声連携コマンドです');
+  }
+  if (!isVoiceCommandWindowReady()) throw new Error('アロナの描画ウィンドウが準備できていません');
+  if (command.type.startsWith('STREAM_') &&
+      (typeof command.streamId !== 'string' || !command.streamId ||
+       command.streamId.length > 100)) throw new Error('ストリーム識別子が不正です');
+  if (command.type === 'STREAM_APPEND' &&
+      (!Number.isSafeInteger(command.seq) || command.seq < 0)) {
+    throw new Error('ストリーム連番が不正です');
+  }
+  if (['SPEAK', 'STREAM_APPEND'].includes(command.type) &&
+      (typeof command.text !== 'string' || !command.text.trim() ||
+       command.text.length > (command.type === 'SPEAK' ? 9000 : 480))) {
+    throw new Error('音声テキストの長さが不正です');
+  }
+  const options = (command.type === 'SPEAK' || command.type === 'STREAM_START')
+    ? { voice: command.voice ?? null, voiceProfiles: command.voiceProfiles ?? {} } : {};
+  mainWindow.webContents.send('avatar:voice-command', {
+    type: command.type,
+    streamId: command.streamId,
+    seq: command.seq,
+    text: command.text,
+    ...options
+  });
+  return { ok: true };
 }
 
 function currentVoice() {
@@ -637,15 +720,22 @@ app.whenReady().then(async () => {
     return startProxyAndRefresh();
   });
 
-  ipcMain.handle('avatar:voice-synthesize', async (event, text) => {
+  ipcMain.handle('avatar:voice-synthesize', async (event, request) => {
     if (!isOurWindow(event)) throw new Error('Unauthorized voice request');
-    const voice = currentVoice();
+    const text = typeof request === 'string' ? request : request?.text;
+    const voice = resolveSelectedVoice(typeof request === 'string' ? null : request?.voice);
+    const voiceProfiles = typeof request === 'string' ? null : request?.voiceProfiles;
+    const profile = voiceProfiles && typeof voiceProfiles === 'object' &&
+      !Array.isArray(voiceProfiles) && voice
+      ? Object.hasOwn(voiceProfiles, voiceKey(voice)) ? voiceProfiles[voiceKey(voice)] : null
+      : null;
+    const globals = globalParameters(profile);
     if (!voice) throw new Error('音声ライブラリが未選択です。右クリックから接続を更新してください');
     if (voiceSynthesis) voiceSynthesis.abort();
     const controller = new AbortController();
     voiceSynthesis = controller;
     try {
-      const bytes = await voiceClient.synthesize(text, voice, controller.signal);
+      const bytes = await voiceClient.synthesize(text, voice, controller.signal, globals);
       console.info('[CORE speech] normalized:', voiceClient.lastWavInfo);
       if (controller.signal.aborted) throw new Error('古い音声リクエストを中断しました');
       return { wavBase64: bytes.toString('base64'), voiceName: voice.voice_name };
@@ -706,10 +796,11 @@ app.whenReady().then(async () => {
     userDataPath: app.getPath('userData'),
     safeStorage,
     onText: text => {
-      if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isLoading()) return false;
+      if (!isVoiceCommandWindowReady()) return false;
       mainWindow.webContents.send('avatar:voice-text', text);
       return true;
-    }
+    },
+    onCommand: handleSpeechCommand
   });
   void speechBridge.start().catch(error => {
     speechBridgeError = String(error?.message ?? error);
