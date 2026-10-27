@@ -145,8 +145,9 @@ function initialize() {
 }
 function arm(reason, { captureBaseline = true } = {}) {
   if (!monitor.ready) initialize();
-  if (monitor.armed && reason === 'ユーザー発言の追加' &&
-      Date.now() - monitor.armTime < 1600) return;
+  // One user action can fire both keyboard and button events; do not reset
+  // the answer already being tracked for that same action.
+  if (monitor.armed && Date.now() - monitor.armTime < 650) return;
   monitor.epoch++;
   void queuedMessage('STOP', {}, monitor.epoch);
   if (captureBaseline) {
@@ -263,17 +264,13 @@ function scan() {
     if (!monitor.armed) { initialize(); return; }
   }
   const user = userSignature();
-  if (user !== monitor.latestUser) {
-    if (monitor.latestUser && (document.hasFocus() || monitor.armed))
-      arm('ユーザー発言の追加');
-    monitor.latestUser = user;
-  }
+  // ChatGPT hydrates old messages asynchronously after F5/navigation.
+  // A new user DOM node, a changed answer, or a stop-generation button
+  // is NOT proof of an intentional new submission.
+  // Only the real send/regenerate UI handlers above can arm automatic speech.
+  if (user !== monitor.latestUser) monitor.latestUser = user;
+  if (!monitor.armed) return;
   const entry = lastEntry();
-  if (!monitor.armed) {
-    if (!monitor.muted && entry && isGenerating() && currentReplyText(entry))
-      arm('新しい回答の生成を検出', { captureBaseline: false });
-    return;
-  }
   if (Date.now() - monitor.armTime > 1800000) {
     drainSentences(true);
     if (monitor.streamOpen) void queuedMessage('STREAM_END', { streamId: monitor.streamId });
@@ -313,6 +310,14 @@ function scan() {
     monitor.lastAction = '入力待ち（新しい文字が現れれば続きだけ読みます）';
   }
 }
+// A refresh/navigation must not leave the previous page's playback running.
+// The browser may terminate content scripts during pagehide, so this is best-effort.
+window.addEventListener('pagehide', () => {
+  if (!monitor.armed && !monitor.streamOpen) return;
+  cancelAuto('ページ再読み込み');
+  void chrome.runtime.sendMessage({ target: 'worker', type: 'STOP' }).catch(() => {});
+});
+
 initialize();
 setInterval(scan, 450);
 
