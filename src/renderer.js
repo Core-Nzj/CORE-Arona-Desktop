@@ -4,6 +4,7 @@ import { buildIdleVmd, IDLE_FRAMES } from './idle-vmd.mjs';
 import { EmotionController } from './emotions.mjs';
 import { makeWebAudioBuffer } from './pcm-playback.mjs';
 import { LipSyncController, mouthLevelFromSamples } from './lip-sync.mjs';
+import { SpeechPlaybackQueue } from './speech-queue.mjs';
 import { approachZoom, fovForZoom } from './camera-zoom.mjs';
 import { Engine } from '@babylonjs/core/Engines/engine';
 import { Scene } from '@babylonjs/core/scene';
@@ -82,6 +83,8 @@ let activeSpeechAnalyser = null;
 const speechSamples = new Float32Array(1024);
 let speechGeneration = 0;
 
+let activeSpeechResolve = null;
+
 function disposeSpeechAudio() {
   activeSpeechAnalyser = null;
   lipSyncController?.setLevel(0);
@@ -89,7 +92,7 @@ function disposeSpeechAudio() {
   activeSpeechSource = null;
   if (source) {
     source.onended = null;
-    try { source.stop(); } catch { /* finished already */ }
+    try { source.stop(); } catch { /* AudioBufferSourceNode may have ended */ }
     source.disconnect();
   }
   const context = activeSpeechContext;
@@ -97,25 +100,25 @@ function disposeSpeechAudio() {
   if (context && context.state !== 'closed') {
     void context.close().catch(error => console.warn('AudioContext close failed', error));
   }
+  const finish = activeSpeechResolve;
+  activeSpeechResolve = null;
+  if (finish) finish();
 }
 
-function stopSpeech() {
+function stopSpeechHardware() {
+  // A queued piece must be aborted only on STOP or a genuinely new reply.
   speechGeneration++;
   window.aronaDesktop.cancelVoice();
   disposeSpeechAudio();
 }
 
-async function speakLatest(text) {
-  stopSpeech();
+async function playSpeechChunk(text, voice = null, voiceProfiles = {}) {
   const generation = speechGeneration;
   window.aronaDesktop.reportVoicePlayback('WAV合成中');
   try {
-    const speech = await window.aronaDesktop.synthesizeSpeech(text);
+    const speech = await window.aronaDesktop.synthesizeSpeech({ text, voice, voiceProfiles });
     if (generation !== speechGeneration) return;
 
-    // The main process has converted any supported source WAV into standard
-    // 16-bit PCM. Populate the Web Audio buffer directly: no Blob URL, <audio>
-    // element, browser WAV codec detection or media source loading required.
     const raw = atob(speech.wavBase64);
     const bytes = Uint8Array.from(raw, char => char.charCodeAt(0));
     const context = new AudioContext({ latencyHint: 'interactive' });
@@ -132,19 +135,50 @@ async function speakLatest(text) {
     analyser.connect(context.destination);
     activeSpeechAnalyser = analyser;
     activeSpeechSource = source;
-    source.onended = () => {
-      if (generation !== speechGeneration || activeSpeechSource !== source) return;
-      disposeSpeechAudio();
-      window.aronaDesktop.reportVoicePlayback('再生完了');
-    };
-    source.start();
-    window.aronaDesktop.reportVoicePlayback('Web Audio再生中: ' + speech.voiceName);
+
+    await new Promise(resolve => {
+      activeSpeechResolve = resolve;
+      source.onended = () => {
+        if (activeSpeechSource !== source) return resolve();
+        disposeSpeechAudio();
+      };
+      source.start();
+      window.aronaDesktop.reportVoicePlayback('Web Audio再生中: ' + speech.voiceName);
+    });
   } catch (error) {
     if (generation !== speechGeneration) return;
     disposeSpeechAudio();
-    const message = String(error?.message ?? error);
-    console.error('VoiSona speech failed:', error);
-    window.aronaDesktop.reportVoicePlayback('再生失敗: ' + message);
+    throw error;
+  }
+}
+
+const speechQueue = new SpeechPlaybackQueue({
+  play: playSpeechChunk,
+  interrupt: stopSpeechHardware,
+  status: status => window.aronaDesktop.reportVoicePlayback(status)
+});
+
+function stopSpeech() { speechQueue.stop(); }
+function speakLatest(text) { speechQueue.speak(text); }
+
+function handleVoiceCommand(command) {
+  if (!command || typeof command !== 'object') return;
+  switch (command.type) {
+    case 'STOP':
+      speechQueue.stop();
+      break;
+    case 'SPEAK':
+      speechQueue.speak(command.text, command.voice, command.voiceProfiles);
+      break;
+    case 'STREAM_START':
+      speechQueue.start(command.streamId, command.voice, command.voiceProfiles);
+      break;
+    case 'STREAM_APPEND':
+      speechQueue.append(command.streamId, command.seq, command.text);
+      break;
+    case 'STREAM_END':
+      speechQueue.end(command.streamId);
+      break;
   }
 }
 
@@ -534,6 +568,7 @@ window.aronaDesktop.onEmotionChange(setEmotion);
 window.aronaDesktop.onVoiceTest(() => speakLatest('先生、こんにちは！ コア・アロナ・デスクトップから、お話ししています。'));
 window.aronaDesktop.onVoiceText(text => { void speakLatest(text); });
 window.aronaDesktop.onVoiceStop(stopSpeech);
+window.aronaDesktop.onVoiceCommand(handleVoiceCommand);
 
 // Keep emotion morphs separate from VMD-driven blinking and future lip sync.
 // MmdRuntime is registered earlier, so this observer applies emotion weights
