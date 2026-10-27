@@ -1,0 +1,91 @@
+'use strict';
+
+const feedback = document.getElementById('feedback');
+const voiceList = document.getElementById('voice-list');
+const emotionList = document.getElementById('emotion-list');
+let busy = false;
+
+function message(value, error = false) {
+  feedback.textContent = value;
+  feedback.classList.toggle('error', error);
+}
+function tabTo(name) {
+  for (const panel of document.querySelectorAll('[data-page]')) {
+    panel.hidden = panel.dataset.page !== name;
+  }
+  for (const tab of document.querySelectorAll('[data-tab]')) {
+    const active = tab.dataset.tab === name;
+    tab.classList.toggle('selected', active);
+    tab.setAttribute('aria-selected', String(active));
+  }
+}
+function makeOption(label, id, selected, enabled, action) {
+  const element = document.createElement('button');
+  element.type = 'button';
+  element.className = 'option' + (selected ? ' selected' : '');
+  element.disabled = !enabled;
+  element.dataset.action = action;
+  element.dataset.value = id;
+  element.setAttribute('aria-pressed', String(selected));
+  const text = document.createElement('span');
+  text.textContent = label; // Never interpret voice/model names as HTML.
+  element.appendChild(text);
+  return element;
+}
+function renderState(state) {
+  if (!state || typeof state !== 'object') return;
+  document.getElementById('model-name').textContent = state.modelName || '未選択';
+  document.getElementById('voice-status').textContent = state.voiceStatus || '未接続';
+  document.getElementById('voice-light').classList.toggle('online', !!state.voiceReady);
+  const voices = Array.isArray(state.voices) ? state.voices : [];
+  const voiceButtons = voices.map(voice =>
+    makeOption(voice.name, voice.name, !!voice.selected, true, 'voice.select'));
+  if (!voices.length) {
+    const empty = document.createElement('div');
+    empty.className = 'empty';
+    empty.textContent = '音声ライブラリがありません';
+    voiceButtons.push(empty);
+  }
+  voiceList.replaceChildren(...voiceButtons);
+  document.querySelector('[data-action="voice.test"]').disabled = !voices.length;
+  document.querySelector('[data-action="voice.token"]').disabled = !state.tokenReady;
+  const options = [['neutral','通常'],['happy','笑顔'],['angry','怒り'],['sad','悲しみ'],['surprised','驚き']];
+  emotionList.replaceChildren(...options.map(([id,label]) =>
+    makeOption(label,id,state.emotion?.selected === id,
+      state.emotion?.available?.[id] === true,'emotion.select')));
+}
+const keepOpen = new Set(['voice.refresh','voice.select','emotion.select']);
+async function runAction(action, value) {
+  if (busy) return;
+  busy = true;
+  message('処理しています…');
+  try {
+    const result = await window.aronaMenu.action(action, value);
+    if (!result?.ok) {
+      message(result?.message || '操作に失敗しました', true);
+    } else {
+      if (result.state) renderState(result.state);
+      message(result.message || '完了しました');
+      if (!keepOpen.has(action)) window.aronaMenu.close();
+    }
+  } catch (error) {
+    message('操作できませんでした: ' + String(error?.message ?? error), true);
+  } finally {
+    busy = false;
+  }
+}
+
+document.addEventListener('click', event => {
+  const tab = event.target.closest('[data-tab]');
+  if (tab) { tabTo(tab.dataset.tab); return; }
+  const target = event.target.closest('[data-action]');
+  if (target && !target.disabled) void runAction(target.dataset.action, target.dataset.value);
+});
+document.getElementById('close').addEventListener('click', () => window.aronaMenu.close());
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape') window.aronaMenu.close();
+});
+window.aronaMenu.state().then(state => {
+  renderState(state);
+  message('CORE ARONA DESKTOP / READY');
+}).catch(error => message('メニューを初期化できません: ' + String(error?.message ?? error), true));
