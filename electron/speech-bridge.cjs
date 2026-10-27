@@ -14,8 +14,9 @@ const MAX_BODY_BYTES = 16 * 1024;
 const MAX_TEXT_LENGTH = 500;
 
 class SpeechBridge {
-  constructor({ userDataPath, safeStorage, onText }) {
+  constructor({ userDataPath, safeStorage, onText, port = PORT }) {
     this.userDataPath = userDataPath;
+    this.port = port;
     this.safeStorage = safeStorage;
     this.onText = onText;
     this.server = null;
@@ -55,7 +56,7 @@ class SpeechBridge {
     try {
       await new Promise((resolve, reject) => {
         server.once('error', reject);
-        server.listen(PORT, HOST, () => {
+        server.listen(this.port, HOST, () => {
           server.removeListener('error', reject);
           resolve();
         });
@@ -77,7 +78,9 @@ class SpeechBridge {
       response.end(message);
     };
     if (request.url !== '/speak' || request.method !== 'POST') return reply(404, 'Not found');
-    if (request.headers.host !== HOST + ':' + PORT) return reply(403, 'Invalid host');
+    if (request.headers.host !== HOST + ':' + (this.server?.address()?.port ?? this.port)) {
+      return reply(403, 'Invalid host');
+    }
     const supplied = request.headers.authorization?.match(/^Bearer ([a-f0-9]{64})$/)?.[1];
     if (!supplied || !this.token || !timingSafeEqual(Buffer.from(supplied), Buffer.from(this.token))) {
       return reply(401, 'Invalid token');
