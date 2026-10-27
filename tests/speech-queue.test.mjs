@@ -5,9 +5,30 @@ import { SpeechPlaybackQueue, splitSpeechText } from '../src/speech-queue.mjs';
 test('sentence splitting preserves order and 280-character synth limit', () => {
   const text = 'こんにちは。' + 'あ'.repeat(550);
   const parts = splitSpeechText(text);
-  assert.ok(parts.length >= 3);
+  assert.equal(parts.length, 3);
+  assert.equal(parts[0], 'こんにちは。');
+  assert.equal(parts.join(''), text);
   assert.ok(parts.every(piece => piece.length <= 280));
 });
+
+
+test('splits at natural punctuation without losing or repeating characters', () => {
+  const cases = [
+    'はい。'.repeat(130),
+    'これは確認事項です！「その通りです。」' + '続き'.repeat(300),
+    '単語 '.repeat(250) + '終わり。',
+    '句読点、あり。' + 'あ'.repeat(1000)
+  ];
+  for (const text of cases) {
+    const parts = splitSpeechText(text);
+    assert.equal(parts.join(''), text.trim(), 'split must preserve every character');
+    assert.ok(parts.every(part => part.length > 0 && part.length <= 280));
+  }
+  // Several short sentences should share a chunk, rather than starting
+  // hundreds of wasteful individual synth requests.
+  assert.ok(splitSpeechText('はい。'.repeat(130)).length <= 3);
+});
+
 
 test('same-stream pieces play in order without interrupting the previous piece', async () => {
   const played = [], resolvers = [];
