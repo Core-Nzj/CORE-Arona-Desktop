@@ -483,7 +483,7 @@ function showAvatarMenu() {
     backgroundColor: '#00000000',
     show: false,
     resizable: false,
-    movable: false,
+    movable: true,
     skipTaskbar: true,
     alwaysOnTop: true,
     hasShadow: true,

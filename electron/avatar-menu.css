@@ -1,13 +1,18 @@
 :root{font-family:"Segoe UI","Yu Gothic UI","Meiryo",sans-serif;color:#254561;font-size:12px;-webkit-font-smoothing:antialiased}*{box-sizing:border-box}html,body{margin:0;height:100%;background:transparent;overflow:hidden}body{padding:5px}button{font:inherit}button:focus-visible{outline:2px solid #ffd76f;outline-offset:1px}
 .shell{display:flex;flex-direction:column;position:relative;height:100%;border-radius:14px;border:2px solid #91d6f4;background:linear-gradient(139deg,#eafaff 0%,#fff 40%,#f5fbff 100%);box-shadow:0 10px 29px #073c6455,inset 0 0 0 1px #fff;overflow:hidden}
 .shell::after{content:"";position:absolute;right:0;bottom:0;width:25px;height:25px;pointer-events:none;background:#92daf4;clip-path:polygon(100% 0,100% 100%,0 100%);opacity:.75}
-.stripe{height:7px;flex:none;background:repeating-linear-gradient(120deg,#9ce4ff 0 19px,#48bce9 19px 32px,#e6fbff 32px 46px)}
-.heading{display:flex;align-items:center;gap:11px;padding:17px 15px 16px;min-height:104px}
+.titlebar{display:flex;align-items:center;justify-content:space-between;flex:none;height:32px;min-height:32px;padding-left:14px;border-bottom:1px solid #c9eaf7;background:linear-gradient(90deg,#f5fcff,#eaf8ff);cursor:move;user-select:none;-webkit-user-select:none;app-region:drag;-webkit-app-region:drag}
+.titlebar-name{display:flex;align-items:center;gap:7px;color:#558da9;font-size:10px;font-weight:800;letter-spacing:.09em;pointer-events:none}
+.titlebar-icon{color:#3bb5ea;font-size:13px}
+.titlebar-close{display:grid;place-items:center;align-self:stretch;flex:none;width:43px;margin:0;padding:0;border:0;border-left:1px solid #d5ecf7;border-radius:0 10px 0 0;background:transparent;color:#6e96aa;font-size:20px;font-weight:400;line-height:1;cursor:pointer;transition:background-color .13s,color .13s;app-region:no-drag;-webkit-app-region:no-drag}
+.titlebar-close:hover{background:#ffe4e8;color:#bb4657}
+.titlebar-close:active{background:#ffd3dc;color:#aa3348}
+.stripe{height:5px;flex:none;background:repeating-linear-gradient(120deg,#9ce4ff 0 19px,#48bce9 19px 32px,#e6fbff 32px 46px)}
+.heading{display:flex;align-items:center;gap:11px;padding:10px 15px 10px;min-height:84px}
 .badge{position:relative;flex:none;display:grid;place-items:center;width:53px;height:53px;background:linear-gradient(145deg,#60d0fa,#2299dc);color:#fff;font-size:25px;font-weight:900;clip-path:polygon(16% 0,100% 0,100% 83%,83% 100%,0 100%,0 16%);filter:drop-shadow(0 3px 2px #188fd255)}
 .badge span{position:absolute;right:6px;top:4px;color:#ffedb5;font-size:9px}
 .head-text{flex:1;min-width:0}.eyebrow{color:#89b9d0;font-size:9px;font-weight:800;letter-spacing:.14em}
 h1{margin:4px 0 0;font-size:21px;font-weight:850;line-height:1.2}h1 span{color:#2fa8e3;font-size:11px;letter-spacing:.05em}.head-text p{margin:5px 0 0;color:#799aaf;font-size:11px}
-.close{align-self:flex-start;flex:none;width:26px;height:26px;border:1px solid #d1e9f4;border-radius:50%;background:#fff;color:#7294a9;font-size:21px;line-height:19px;cursor:pointer}.close:hover{color:#d96875;border-color:#eeacb5}
 .tabs{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:5px;padding:0 13px 10px;border-bottom:1px solid #dceef6}
 .tab{padding:10px 0;border:1px solid #d8ebf4;border-radius:7px 7px 4px 4px;background:#f1f8fc;color:#719aaf;font-weight:800;cursor:pointer;position:relative}
 .tab.selected{color:#fff;border-color:#2eaae5;background:linear-gradient(#62cefa,#30a9e7);box-shadow:0 3px 0 #1b8dc8}
