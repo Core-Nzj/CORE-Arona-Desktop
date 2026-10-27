@@ -1,6 +1,6 @@
 'use strict';
 
-const { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, protocol, screen, safeStorage, shell } = require('electron');
+const { app, BrowserWindow, clipboard, dialog, ipcMain, protocol, screen, safeStorage, shell } = require('electron');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { resolveAssetPath } = require('./asset-path.cjs');
@@ -47,6 +47,7 @@ protocol.registerSchemesAsPrivileged([{
 let mainWindow;
 let avatarScale = INITIAL_SCALE;
 let settingsWindow = null;
+let menuWindow = null;
 const proxyManager = new ProxyManager();
 let credentialStore = null;
 let browserCredentialPortal = null;
@@ -442,173 +443,172 @@ async function reportClipboardError(error) {
   }
 }
 
+// A separate popup keeps the avatar's native click-through silhouette intact.
+function menuState() {
+  return {
+    modelName: currentModelFile ? path.basename(currentModelFile) : '未選択',
+    voices: voiceEntries.map(v => ({
+      name: v.voice_name,
+      selected: v.voice_name === selectedVoiceName
+    })),
+    voiceStatus: voiceError || '接続済み',
+    voiceReady: !voiceError && voiceEntries.length > 0,
+    tokenReady: Boolean(speechBridge?.server),
+    emotion: { selected: emotionState.selected, available: emotionState.available }
+  };
+}
+
+function closeAvatarMenu() {
+  const popup = menuWindow;
+  menuWindow = null;
+  if (popup && !popup.isDestroyed()) popup.close();
+}
+
 function showAvatarMenu() {
-  if (!mainWindow || mainWindow.isDestroyed()) return;
-  const zoom = action => zoomAvatarWindow(action);
-
-  const voiceSubmenu = [
-    {
-      label: '接続設定・認証情報...',
-      click: () => openVoiceSettings()
-    },
-    { type: 'separator' },
-    {
-      label: voiceError ? '未接続（更新してください）' : '接続中',
-      enabled: false
-    },
-    { type: 'separator' },
-    {
-      label: 'Proxyを起動・音声一覧を更新',
-      click: async () => {
-        await startProxyAndRefresh();
-        if (mainWindow && !mainWindow.isDestroyed()) {
-          await dialog.showMessageBox(mainWindow, {
-            type: voiceError ? 'warning' : 'info',
-            title: 'VoiSona Talk Proxy',
-            message: voiceError || '音声ライブラリを検出しました',
-            detail: voiceDiagnostics(),
-            buttons: ['閉じる']
-          });
-        }
-      }
-    },
-    {
-      label: '使用する音声',
-      enabled: voiceEntries.length > 0,
-      submenu: voiceEntries.length
-        ? voiceEntries.map(voice => ({
-          label: voice.voice_name,
-          type: 'radio',
-          checked: selectedVoiceName === voice.voice_name,
-          click: () => {
-            selectedVoiceName = voice.voice_name;
-            void saveModelSelection();
-          }
-        }))
-        : [{ label: '音声ライブラリなし', enabled: false }]
-    },
-    { type: 'separator' },
-    {
-      label: 'テスト発話',
-      enabled: voiceEntries.length > 0,
-      click: () => mainWindow?.webContents.send('avatar:voice-test')
-    },
-    {
-      label: 'クリップボードの文章を発話（最大500文字）',
-      click: async () => {
-        try {
-          const text = await readSpeechText(clipboard);
-          if (!text) return;
-          if (mainWindow && !mainWindow.isDestroyed()) {
-            mainWindow.webContents.send('avatar:voice-text', text);
-          }
-        } catch (error) {
-          await reportClipboardError(error);
-        }
-      }
-    },
-    {
-      label: 'ChatGPT連携トークンをコピー',
-      enabled: Boolean(speechBridge?.server),
-      click: async () => {
-        try {
-          await copySpeechToken(clipboard, speechBridge?.token);
-        } catch (error) {
-          await reportClipboardError(error);
-        }
-      }
-    },
-    {
-      label: '再生停止',
-      click: () => {
-        if (voiceSynthesis) voiceSynthesis.abort();
-        mainWindow?.webContents.send('avatar:voice-stop');
-      }
-    },
-    { type: 'separator' },
-    {
-      label: '音声診断',
-      click: () => {
-        if (!mainWindow || mainWindow.isDestroyed()) return;
-        void dialog.showMessageBox(mainWindow, {
-          type: voiceError ? 'warning' : 'info',
-          title: 'VoiSona Talk Proxy',
-          message: '音声接続の状態',
-          detail: voiceDiagnostics(),
-          buttons: ['閉じる']
-        });
-      }
-    }
-  ];
-
-  const menu = Menu.buildFromTemplate([
-    {
-      label: 'モデルを変更...',
-      click: async () => {
-        try {
-          const selected = await chooseModel();
-          if (selected && mainWindow && !mainWindow.isDestroyed()) {
-            mainWindow.webContents.send('avatar:model-changed', selected);
-          }
-        } catch (error) {
-          console.error('Unable to choose model from context menu:', error);
-        }
-      }
-    },
-    {
-      label: '音声（VoiSona Talk）',
-      submenu: voiceSubmenu
-    },
-    {
-      label: '表情',
-      submenu: EMOTION_OPTIONS.map(({ id, label }) => ({
-        label,
-        type: 'radio',
-        checked: emotionState.selected === id,
-        enabled: emotionState.available[id] === true,
-        click: () => {
-          if (!mainWindow || mainWindow.isDestroyed()) return;
-          if (emotionState.available[id] !== true) return;
-          mainWindow.webContents.send('avatar:emotion-change', id);
-        }
-      }))
-    },
-    { type: 'separator' },
-    { label: '拡大', click: () => zoom('in') },
-    { label: '縮小', click: () => zoom('out') },
-    { label: '大きさをリセット', click: () => zoom('reset') },
-    { type: 'separator' },
-    {
-      label: '表情診断',
-      click: () => {
-        if (!mainWindow || mainWindow.isDestroyed()) return;
-        void dialog.showMessageBox(mainWindow, {
-          type: 'info',
-          title: 'CORE Arona Desktop / Phase 2-2',
-          message: 'モデルの表情対応',
-          detail: emotionState.details,
-          buttons: ['閉じる']
-        });
-      }
-    },
-    {
-      label: 'モーション診断',
-      click: () => {
-        if (!mainWindow || mainWindow.isDestroyed()) return;
-        void dialog.showMessageBox(mainWindow, {
-          type: 'info',
-          title: 'CORE Arona Desktop / Phase 2-1',
-          message: '待機モーションの診断',
-          detail: idleDiagnostics,
-          buttons: ['閉じる']
-        });
-      }
-    },
-    { type: 'separator' },
-    { label: '終了', click: () => app.quit() }
-  ]);
+  if (!mainWindow || mainWindow.isDestroyed() || !currentModelFile) return;
+  closeAvatarMenu();
   stopAvatarDrag();
-  menu.popup({ window: mainWindow });
+  const pointer = screen.getCursorScreenPoint();
+  const area = screen.getDisplayNearestPoint(pointer).workArea;
+  const width = Math.min(376, Math.max(280, area.width - 12));
+  const height = Math.min(566, Math.max(320, area.height - 12));
+  const x = Math.max(area.x, Math.min(pointer.x + 12, area.x + area.width - width));
+  const y = Math.max(area.y, Math.min(pointer.y + 10, area.y + area.height - height));
+  const popup = new BrowserWindow({
+    parent: mainWindow,
+    title: 'CORE Arona / Control Panel',
+    x, y, width, height,
+    frame: false,
+    transparent: true,
+    backgroundColor: '#00000000',
+    show: false,
+    resizable: false,
+    movable: false,
+    skipTaskbar: true,
+    alwaysOnTop: true,
+    hasShadow: true,
+    webPreferences: {
+      preload: path.join(__dirname, 'avatar-menu-preload.cjs'),
+      contextIsolation: true,
+      sandbox: true,
+      nodeIntegration: false,
+      webSecurity: true
+    }
+  });
+  menuWindow = popup;
+  popup.setMenuBarVisibility(false);
+  popup.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  popup.webContents.on('will-navigate', event => event.preventDefault());
+  popup.once('ready-to-show', () => {
+    if (menuWindow !== popup || popup.isDestroyed()) return;
+    popup.show();
+    popup.focus();
+  });
+  popup.on('blur', () => {
+    if (menuWindow === popup) closeAvatarMenu();
+  });
+  popup.on('closed', () => {
+    if (menuWindow === popup) menuWindow = null;
+  });
+  popup.loadFile(path.join(__dirname, 'avatar-menu.html')).catch(error => {
+    console.error('[CORE menu] load failed:', error);
+    if (menuWindow === popup) closeAvatarMenu();
+  });
+}
+
+function isMenuWindow(event) {
+  return Boolean(menuWindow && !menuWindow.isDestroyed() &&
+    event.sender === menuWindow.webContents);
+}
+
+async function executeMenuAction(action, value) {
+  if (!mainWindow || mainWindow.isDestroyed()) throw new Error('モデル画面がありません');
+  switch (action) {
+    case 'model.change': {
+      const model = await chooseModel();
+      if (model && mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('avatar:model-changed', model);
+      }
+      return model ? 'モデルを変更しました' : '変更をキャンセルしました';
+    }
+    case 'voice.settings':
+      openVoiceSettings();
+      return '接続設定を開きました';
+    case 'voice.refresh':
+      await startProxyAndRefresh();
+      return voiceError || '音声を更新しました';
+    case 'voice.select':
+      if (typeof value !== 'string' || value.length > 160 ||
+          !voiceEntries.some(v => v.voice_name === value)) {
+        throw new Error('使用できない音声です');
+      }
+      selectedVoiceName = value;
+      await saveModelSelection();
+      return '音声を選択しました';
+    case 'voice.test':
+      if (!voiceEntries.length) throw new Error('音声ライブラリがありません');
+      mainWindow.webContents.send('avatar:voice-test');
+      return 'テスト発話を開始しました';
+    case 'voice.clipboard': {
+      const text = await readSpeechText(clipboard);
+      if (!text) throw new Error('クリップボードに文章がありません');
+      mainWindow.webContents.send('avatar:voice-text', text);
+      return '読み上げを開始しました';
+    }
+    case 'voice.token':
+      if (!speechBridge?.server || !speechBridge.token) {
+        throw new Error('連携トークンはまだ準備できていません');
+      }
+      await copySpeechToken(clipboard, speechBridge.token);
+      return '連携トークンをコピーしました';
+    case 'voice.stop':
+      if (voiceSynthesis) voiceSynthesis.abort();
+      mainWindow.webContents.send('avatar:voice-stop');
+      return '再生を停止しました';
+    case 'emotion.select':
+      if (typeof value !== 'string' ||
+          !EMOTION_OPTIONS.some(v => v.id === value) ||
+          emotionState.available[value] !== true) {
+        throw new Error('このモデルでは利用できない表情です');
+      }
+      mainWindow.webContents.send('avatar:emotion-change', value);
+      return '表情を変更しました';
+    case 'zoom.in': case 'zoom.out': case 'zoom.reset':
+      zoomAvatarWindow(action.slice(5));
+      return '表示倍率を変更しました';
+    case 'diagnostic.emotion':
+      await dialog.showMessageBox(mainWindow, {
+        type: 'info',
+        title: 'CORE Arona / 表情診断',
+        message: 'モデルの表情対応',
+        detail: emotionState.details,
+        buttons: ['閉じる']
+      });
+      return '表情診断を閉じました';
+    case 'diagnostic.motion':
+      await dialog.showMessageBox(mainWindow, {
+        type: 'info',
+        title: 'CORE Arona / モーション診断',
+        message: '待機モーションの診断',
+        detail: idleDiagnostics,
+        buttons: ['閉じる']
+      });
+      return 'モーション診断を閉じました';
+    case 'diagnostic.voice':
+      await dialog.showMessageBox(mainWindow, {
+        type: voiceError ? 'warning' : 'info',
+        title: 'CORE Arona / 音声診断',
+        message: '音声接続の状態',
+        detail: voiceDiagnostics(),
+        buttons: ['閉じる']
+      });
+      return '音声診断を閉じました';
+    case 'app.quit':
+      app.quit();
+      return '終了します';
+    default:
+      throw new Error('未対応のメニュー操作です');
+  }
 }
 
 function createWindow() {
@@ -648,7 +648,12 @@ function createWindow() {
     const { cameraZoom } = boundsForScale(mainWindow.getBounds(), area, avatarScale);
     mainWindow.webContents.send('avatar:camera-zoom', cameraZoom);
   });
-  mainWindow.on('closed', () => { stopAvatarDrag(); voiceSynthesis?.abort(); mainWindow = null; });
+  mainWindow.on('closed', () => {
+    closeAvatarMenu();
+    stopAvatarDrag();
+    voiceSynthesis?.abort();
+    mainWindow = null;
+  });
 }
 
 app.whenReady().then(async () => {
@@ -662,6 +667,23 @@ app.whenReady().then(async () => {
   });
   ipcMain.on('avatar:menu', event => {
     if (isOurWindow(event) && currentModelFile) showAvatarMenu();
+  });
+  ipcMain.handle('avatar-menu:state', event => {
+    if (!isMenuWindow(event)) throw new Error('Unauthorized menu request');
+    return menuState();
+  });
+  ipcMain.handle('avatar-menu:action', async (event, action, value) => {
+    if (!isMenuWindow(event)) throw new Error('Unauthorized menu action');
+    try {
+      const message = await executeMenuAction(action, value);
+      return { ok: true, message, state: menuState() };
+    } catch (error) {
+      console.error('[CORE menu] action failed:', action, error);
+      return { ok: false, message: String(error?.message ?? error).slice(0, 240) };
+    }
+  });
+  ipcMain.on('avatar-menu:close', event => {
+    if (isMenuWindow(event)) closeAvatarMenu();
   });
   ipcMain.on('avatar:zoom', (event, action) => {
     if (isOurWindow(event) && currentModelFile) zoomAvatarWindow(action);
@@ -814,5 +836,10 @@ app.whenReady().then(async () => {
   app.quit();
 });
 
-app.on('before-quit', () => { browserCredentialPortal?.close(); speechBridge?.close(); proxyManager.stop(); });
+app.on('before-quit', () => {
+  closeAvatarMenu();
+  browserCredentialPortal?.close();
+  speechBridge?.close();
+  proxyManager.stop();
+});
 app.on('window-all-closed', () => app.quit());
