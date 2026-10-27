@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'">
+<title>CORE ARONA / CONTROL</title>
+<link rel="stylesheet" href="avatar-menu.css">
+</head>
+<body>
+<main class="shell" aria-label="アロナの操作パネル">
+  <div class="stripe" aria-hidden="true"></div>
+  <header class="heading">
+    <div class="badge" aria-hidden="true">A<span>✦</span></div>
+    <div class="head-text"><div class="eyebrow">SCHALE · CORE INTERFACE</div><h1>アロナ <span>CONTROL</span></h1><p>先生、何を設定しますか？</p></div>
+    <button type="button" id="close" class="close" aria-label="閉じる">×</button>
+  </header>
+  <nav class="tabs" role="tablist" aria-label="カテゴリ">
+    <button type="button" class="tab selected" data-tab="home" aria-selected="true">ホーム</button>
+    <button type="button" class="tab" data-tab="voice" aria-selected="false">音声</button>
+    <button type="button" class="tab" data-tab="emotion" aria-selected="false">表情</button>
+    <button type="button" class="tab" data-tab="status" aria-selected="false">診断</button>
+  </nav>
+  <div class="content">
+    <section class="page" data-page="home">
+      <div class="section-title"><span>01 / MODEL</span><small>キャラクター</small></div>
+      <div class="model"><span class="model-symbol">◇</span><div><small>LOADED MODEL</small><strong id="model-name">読み込み中...</strong></div></div>
+      <button type="button" class="row primary" data-action="model.change"><span>◇</span>モデルを変更<b>›</b></button>
+      <div class="section-title gap"><span>02 / DISPLAY</span><small>表示サイズ</small></div>
+      <div class="zoom">
+        <button type="button" class="row" data-action="zoom.out">− 縮小</button>
+        <button type="button" class="row" data-action="zoom.reset">リセット</button>
+        <button type="button" class="row" data-action="zoom.in">＋ 拡大</button>
+      </div>
+      <p class="hint">モデル上のホイールでも拡大・縮小できます。</p>
+      <button type="button" class="row danger exit" data-action="app.quit"><span>⏻</span>アプリを終了<b>›</b></button>
+    </section>
+    <section class="page" data-page="voice" hidden>
+      <div class="section-title"><span>03 / VOICE</span><small>VoiSona Talk</small></div>
+      <div class="connection"><i id="voice-light"></i><span id="voice-status">接続を確認中...</span></div>
+      <div class="stack">
+        <button type="button" class="row primary" data-action="voice.settings"><span>⚙</span>接続設定・認証情報<b>›</b></button>
+        <button type="button" class="row" data-action="voice.refresh"><span>↻</span>Proxyを起動・音声一覧を更新</button>
+      </div>
+      <div class="section-title gap"><span>SELECT VOICE</span><small>使用する音声</small></div>
+      <div class="options voice-options" id="voice-list" role="group" aria-label="音声選択"></div>
+      <div class="stack tools">
+        <button type="button" class="row" data-action="voice.test">テスト発話</button>
+        <button type="button" class="row" data-action="voice.clipboard">クリップボードの文章を発話</button>
+        <button type="button" class="row" data-action="voice.token">ChatGPT連携トークンをコピー</button>
+        <button type="button" class="row danger" data-action="voice.stop">再生停止</button>
+      </div>
+    </section>
+    <section class="page" data-page="emotion" hidden>
+      <div class="section-title"><span>04 / EXPRESSION</span><small>表情コントロール</small></div>
+      <p class="description">対応するモーフを検出し、表情を選択します。</p>
+      <div class="options emotion-options" id="emotion-list" role="group" aria-label="表情選択"></div>
+      <div class="note">✧ まばたきと口パクは別に動作します。</div>
+    </section>
+    <section class="page" data-page="status" hidden>
+      <div class="section-title"><span>05 / DIAGNOSTICS</span><small>状態チェック</small></div>
+      <p class="description">動作に問題がある場合は、診断結果を確認できます。</p>
+      <div class="stack">
+        <button type="button" class="row" data-action="diagnostic.emotion"><span>◎</span>表情診断<b>›</b></button>
+        <button type="button" class="row" data-action="diagnostic.motion"><span>⌁</span>モーション診断<b>›</b></button>
+        <button type="button" class="row" data-action="diagnostic.voice"><span>♫</span>音声診断<b>›</b></button>
+      </div>
+      <div class="note">診断結果は研究所への不具合報告にも使えます。</div>
+    </section>
+  </div>
+  <footer><span class="pulse"></span><span id="feedback" role="status" aria-live="polite">CORE ARONA DESKTOP / READY</span><span>01</span></footer>
+</main>
+<script src="avatar-menu.js" defer></script>
+</body></html>
