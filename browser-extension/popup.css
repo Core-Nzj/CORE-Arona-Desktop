@@ -1,0 +1,17 @@
+:root{font-family:system-ui,"Yu Gothic UI",Meiryo,sans-serif;color:#e5eefc;background:#151c2b;line-height:1.45}
+*{box-sizing:border-box}body{width:394px;margin:0;max-height:590px;overflow-y:auto}main{padding:15px 17px}
+header{display:flex;align-items:flex-start;justify-content:space-between;gap:8px}h1{font-size:16px;margin:0}.sub{font-size:11px;color:#9baaca;margin:3px 0 10px}.version{font-size:10px;color:#9baaca;font-weight:500}
+.connection{font-size:10px;color:#70e0b8;text-align:right;max-width:160px;overflow-wrap:anywhere}.hint{font-size:11px;color:#b1bed7;line-height:1.55}.footer{margin:12px 0 0}
+.toggle{display:flex;gap:8px;align-items:center;font-size:12px;margin:10px 0}.toggle input{accent-color:#7ecafa}.field{display:block;font-size:12px;margin:10px 0 5px}
+select,input[type=text],input[type=password],textarea,input[type=number]{background:#29344a;color:#fff;border:1px solid #53627c;border-radius:6px;font:inherit}
+select,textarea,input[type=text],input[type=password]{width:100%;padding:8px}textarea{resize:vertical;min-height:42px;font-size:12px}
+button{padding:9px 10px;background:#8cd1ff;color:#102032;font-weight:650;border:0;border-radius:7px;cursor:pointer;flex:1;font:inherit;font-size:12px}button.secondary{background:#34445f;color:#e9f2ff}button:disabled{opacity:.5;cursor:not-allowed}button.small{margin-top:7px}
+.actions{display:flex;gap:8px;margin-top:10px}.actions.slim{margin-top:8px}
+.panel{margin-top:12px;background:#202c40;border:1px solid #334761;border-radius:9px;padding:0 12px 12px}.panel>summary{cursor:pointer;padding:10px 0;font-size:13px;font-weight:700}.panel .minor{color:#91a5c4;font-size:10px;font-weight:400;margin-left:6px}
+.param-row,.style-row{display:grid;grid-template-columns:85px 1fr 78px;align-items:center;gap:8px;padding:7px 0;border-top:1px solid #304057}
+.param-label,.style-label{font-size:11px;overflow-wrap:anywhere}.param-row input[type=range],.style-row input[type=range]{width:100%;min-width:0;accent-color:#65baff}
+.valuebox{display:flex;align-items:center;gap:3px}.valuebox input{width:57px;padding:5px 3px;text-align:right;font-size:11px}.unit{font-size:9px;color:#a7b8d4}
+.panelbody{padding-bottom:3px}.style-auth{display:grid;gap:7px;margin-top:8px}.style-auth button{padding:8px}
+.style-row{grid-template-columns:91px 1fr 57px}.style-row .valuebox input{width:39px}
+.status{white-space:pre-wrap;overflow-wrap:anywhere;min-height:18px;font-size:12px;color:#dcecff;line-height:1.5;margin:12px 0 4px}
+.diagnostic{font-size:11px;white-space:pre-wrap;overflow-wrap:anywhere;background:#0f1725;border-radius:7px;padding:10px;color:#d7e3f9}
