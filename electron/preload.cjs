@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld('aronaDesktop', Object.freeze({
   synthesizeSpeech: (text) => ipcRenderer.invoke('avatar:voice-synthesize', text),
   cancelVoice: () => ipcRenderer.send('avatar:voice-cancel'),
   onVoiceTest: (callback) => ipcRenderer.on('avatar:voice-test', () => callback()),
+  onVoiceText: (callback) => ipcRenderer.on('avatar:voice-text', (_event, text) => callback(text)),
   onVoiceStop: (callback) => ipcRenderer.on('avatar:voice-stop', () => callback()),
   reportVoicePlayback: (text) => ipcRenderer.send('avatar:voice-playback-status', text),
   reportEmotionState: (state) => ipcRenderer.send('avatar:emotions-state', state),
