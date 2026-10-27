@@ -3,6 +3,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const os = require('node:os');
+const http = require('node:http');
 const path = require('node:path');
 const { SpeechBridge, HOST } = require('../electron/speech-bridge.cjs');
 
@@ -28,7 +29,22 @@ test('accepts token-authenticated speech on loopback and refuses other requests'
       headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token, ...headers }
     });
     assert.equal((await send({ text: '声を出します' }, 'x'.repeat(64))).status, 401);
-    assert.equal((await send({ text: '声を出します' }, bridge.token, { Host: 'example.org' })).status, 403);
+    const badHostStatus = await new Promise((resolve, reject) => {
+      const req = http.request(base, {
+        method: 'POST',
+        headers: {
+          Host: 'example.org',
+          Authorization: 'Bearer ' + bridge.token,
+          'Content-Type': 'application/json'
+        }
+      }, response => {
+        response.resume();
+        response.once('end', () => resolve(response.statusCode));
+      });
+      req.once('error', reject);
+      req.end(JSON.stringify({ text: '声を出します' }));
+    });
+    assert.equal(badHostStatus, 403);
     assert.equal((await send({ text: 'あ'.repeat(501) })).status, 400);
     assert.equal((await send({ text: 'テスト発話' })).status, 202);
     assert.deepEqual(accepted, ['テスト発話']);
