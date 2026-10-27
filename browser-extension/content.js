@@ -9,8 +9,9 @@ const ASSISTANT_UNIT = '[data-content-search-unit-key$=":assistant"]';
 const FINAL_ANSWER = '[data-markdown-text-style="assistant-message"]';
 const LEGACY_ANSWER = '[data-message-author-role="assistant"], [data-role="assistant"], [data-message-author="assistant"]';
 const EXCLUDED_ANSWER_REGION = [
-  '[data-message-phase="analysis"]', '[data-message-phase="commentary"]',
-  '[data-phase="analysis"]', '[data-phase="commentary"]',
+  // Commentary prose can be a genuine assistant message. Do not exclude it
+  // solely by phase: only thinking/reasoning and activity are non-spoken.
+  '[data-message-phase="analysis"]', '[data-phase="analysis"]',
   '[data-testid*="thinking"]', '[data-testid*="reasoning"]',
   '[data-testid*="progress"]', '[data-testid*="activity"]',
   '[data-testid*="tool-status"]', '[data-testid*="status"]',
@@ -35,8 +36,7 @@ const UI_TO_REMOVE = [
   '[role="status"]', '[role="toolbar"]', 'details', 'summary',
   '[data-testid*="reasoning"]', '[data-testid*="thinking"]',
   '[data-testid*="progress"]', '[data-testid*="activity"]',
-  '[data-testid*="tool-status"]', '[data-message-phase="commentary"]',
-  '[data-message-phase="analysis"]', '[data-phase="commentary"]',
+  '[data-testid*="tool-status"]', '[data-message-phase="analysis"]',
   '[data-phase="analysis"]'
 ].join(',');
 const LABEL_RE = /^(?:(?:ChatGPTの発言|ChatGPTの回答|ChatGPT said|ChatGPT:|Assistant:|アシスタントの発言|アシスタントの回答)\s*[:：]?\s*)+/i;
