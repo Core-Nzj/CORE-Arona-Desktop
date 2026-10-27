@@ -4,6 +4,10 @@ const { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, protocol, screen, 
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { resolveAssetPath } = require('./asset-path.cjs');
+const {
+  BASE_WIDTH, BASE_HEIGHT, INITIAL_SCALE, MIN_SCALE,
+  clampScale, windowSizeForScale, boundsForScale
+} = require('./avatar-window-size.cjs');
 const { VoiceProxyClient, PROXY_ORIGIN } = require('./voice-proxy.cjs');
 const { VoiceCredentialStore } = require('./voice-credentials.cjs');
 const { ProxyManager } = require('./proxy-manager.cjs');
@@ -39,6 +43,7 @@ protocol.registerSchemesAsPrivileged([{
 }]);
 
 let mainWindow;
+let avatarScale = INITIAL_SCALE;
 let settingsWindow = null;
 const proxyManager = new ProxyManager();
 let credentialStore = null;
@@ -314,13 +319,29 @@ function startAvatarDrag() {
   }, 16);
 }
 
+function zoomAvatarWindow(action, anchorToCursor = false) {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (!['in', 'out', 'reset'].includes(action)) return;
+  const currentBounds = mainWindow.getBounds();
+  const pointer = anchorToCursor ? screen.getCursorScreenPoint() : null;
+  const display = pointer
+    ? screen.getDisplayNearestPoint(pointer)
+    : screen.getDisplayMatching(currentBounds);
+  const requestedScale = action === 'reset' ? INITIAL_SCALE
+    : avatarScale * (action === 'in' ? 1 / 0.85 : 0.85);
+  const { bounds, scale } = boundsForScale(
+    currentBounds, display.workArea, requestedScale, pointer
+  );
+  avatarScale = scale;
+  if (bounds.x === currentBounds.x && bounds.y === currentBounds.y &&
+      bounds.width === currentBounds.width && bounds.height === currentBounds.height) return;
+  stopAvatarDrag();
+  mainWindow.setBounds(bounds, false);
+}
+
 function showAvatarMenu() {
   if (!mainWindow || mainWindow.isDestroyed()) return;
-  const zoom = action => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('avatar:zoom', action);
-    }
-  };
+  const zoom = action => zoomAvatarWindow(action);
 
   const voiceSubmenu = [
     {
@@ -478,12 +499,16 @@ function showAvatarMenu() {
 }
 
 function createWindow() {
+  // Start near the previously requested 2x avatar size, without clipping
+  // outside the current monitor's working area.
+  avatarScale = clampScale(INITIAL_SCALE, screen.getPrimaryDisplay().workArea);
+  const { width, height } = windowSizeForScale(avatarScale);
   mainWindow = new BrowserWindow({
     title: 'CORE Arona Desktop',
-    width: 390,
-    height: 590,
-    minWidth: 390,
-    minHeight: 590,
+    width,
+    height,
+    minWidth: Math.min(BASE_WIDTH, width),
+    minHeight: Math.min(BASE_HEIGHT, height),
     transparent: true,
     frame: false,
     backgroundColor: '#00000000',
@@ -518,6 +543,9 @@ app.whenReady().then(async () => {
   });
   ipcMain.on('avatar:menu', event => {
     if (isOurWindow(event) && currentModelFile) showAvatarMenu();
+  });
+  ipcMain.on('avatar:zoom', (event, action) => {
+    if (isOurWindow(event) && currentModelFile) zoomAvatarWindow(action, true);
   });
   ipcMain.on('avatar:set-region', (event, rect) => {
     if (isOurWindow(event)) setAvatarRegion(rect);

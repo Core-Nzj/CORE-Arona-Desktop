@@ -20,6 +20,6 @@ contextBridge.exposeInMainWorld('aronaDesktop', Object.freeze({
   startDrag: () => ipcRenderer.send('avatar:drag-start'),
   stopDrag: () => ipcRenderer.send('avatar:drag-stop'),
   setAvatarRegion: (rect) => ipcRenderer.send('avatar:set-region', rect),
-  onZoom: callback => ipcRenderer.on('avatar:zoom', (_event, action) => callback(action)),
+  zoom: action => ipcRenderer.send('avatar:zoom', action),
   onModelChanged: callback => ipcRenderer.on('avatar:model-changed', (_event, model) => callback(model))
 }));
