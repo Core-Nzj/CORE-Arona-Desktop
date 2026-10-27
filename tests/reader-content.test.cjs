@@ -23,11 +23,15 @@ function makeReader({ history = [], userKeys = [], generating = false } = {}) {
     matches(selector) {
       if (selector.includes('.sr-only')) return false;
       return (selector === '[data-turn-key]' && this.kind === 'group') ||
-        (selector === '[data-content-search-unit-key$=":assistant"]' && this.kind === 'assistant');
+        (selector === '[data-content-search-unit-key$=":assistant"]' && this.kind === 'assistant') ||
+        (selector === '[data-markdown-text-style="assistant-message"]' &&
+         ['body', 'thinking', 'progress'].includes(this.kind));
     }
     closest(selector) {
       if (this.kind === 'editor' && selector.includes('textarea')) return this;
       if (this.kind === 'button' && selector === 'button') return this;
+      if (this.kind === 'thinking' && selector.includes('[data-testid*="thinking"]')) return this;
+      if (this.kind === 'progress' && selector.includes('[data-testid*="progress"]')) return this;
       if (this.parent && selector.includes('[data-turn-key]')) return this.parent;
       return null;
     }
@@ -42,6 +46,11 @@ function makeReader({ history = [], userKeys = [], generating = false } = {}) {
     }
     querySelectorAll(selector) {
       if (this.kind === 'group' && selector.includes(':assistant')) return [this.assistant];
+      if (selector === '[data-markdown-text-style="assistant-message"]' &&
+          ['group', 'assistant'].includes(this.kind)) {
+        return [this.assistant?.thinking, this.assistant?.progress,
+          this.assistant?.body].filter(node => node?.matches(selector));
+      }
       if (this.kind === 'assistant' && selector.includes('.markdown')) return [this.body];
       return [];
     }
@@ -52,6 +61,13 @@ function makeReader({ history = [], userKeys = [], generating = false } = {}) {
     const root = new FakeElement({ kind: 'group', key });
     const assistant = new FakeElement({ kind: 'assistant', parent: root });
     assistant.body = new FakeElement({ kind: 'body', text, parent: assistant });
+    // Even if status widgets contain "markdown", they must never be spoken.
+    assistant.thinking = new FakeElement({
+      kind: 'thinking', text: '', parent: assistant
+    });
+    assistant.progress = new FakeElement({
+      kind: 'progress', text: '', parent: assistant
+    });
     root.assistant = assistant;
     return root;
   };
@@ -109,6 +125,81 @@ function makeReader({ history = [], userKeys = [], generating = false } = {}) {
 const settle = () => new Promise(resolve => setTimeout(resolve, 25));
 const chunks = reader => reader.sent.filter(message => message.type === 'STREAM_APPEND')
   .map(message => message.text);
+
+
+test('reasoning and progress updates remain silent until final answer prose appears', async () => {
+  const reader = makeReader({ history: [['古い回答です。', 'old']], generating: true });
+  reader.enter();
+  const active = reader.group('', 'new');
+  reader.groups.push(active);
+
+  active.assistant.thinking.textContent = 'Implementing Explicit User-Armed Reader Activation';
+  active.assistant.progress.textContent = '実装を進め確認と補強を行い内容を確定した';
+  reader.scan();
+  reader.advance(4000);
+  active.assistant.thinking.textContent = '検討した事項を更新しています';
+  active.assistant.progress.textContent = '進捗が更新されました';
+  reader.scan();
+  await settle();
+  assert.deepEqual(chunks(reader), []);
+  assert.equal(reader.sent.filter(message => message.type === 'STREAM_START').length, 0);
+
+  active.assistant.body.textContent = '了解です、先生！ 本文だけを読み上げます。';
+  reader.scan();
+  await settle();
+  assert.deepEqual(chunks(reader), ['了解です、先生！', '本文だけを読み上げます。']);
+  assert.equal(chunks(reader).some(text => /Implementing|進捗|検討/.test(text)), false);
+});
+
+test('intermediate thinking never flushes an unfinished final-answer fragment', async () => {
+  const reader = makeReader({ generating: true });
+  reader.enter();
+  const active = reader.group('回答の一文です。未完成', 'new');
+  reader.groups.push(active);
+  reader.scan();
+  await settle();
+  assert.deepEqual(chunks(reader), ['回答の一文です。']);
+
+  // Only reasoning changes, so the incomplete final text must not be flushed.
+  active.assistant.thinking.textContent = 'Implementing the next update';
+  active.assistant.progress.textContent = '処理を続行しています';
+  reader.advance(4500);
+  reader.scan();
+  await settle();
+  assert.deepEqual(chunks(reader), ['回答の一文です。']);
+
+  // Only an actual change to final prose is allowed to advance playback.
+  active.assistant.body.textContent = '回答の一文です。未完成だった続きです。';
+  reader.scan();
+  await settle();
+  assert.deepEqual(chunks(reader), ['回答の一文です。', '未完成だった続きです。']);
+});
+
+test('generic thinking markdown without a final-response marker fails closed', async () => {
+  const reader = makeReader({ generating: true });
+  reader.enter();
+  const active = reader.group('この文章は思考メモです。', 'reasoning-only');
+  active.assistant.body.kind = 'unmarked';
+  active.assistant.thinking.textContent = '内部思考を文章にしています。';
+  reader.groups.push(active);
+  reader.scan();
+  reader.advance(4500);
+  reader.scan();
+  await settle();
+  assert.deepEqual(chunks(reader), []);
+});
+
+test('manual last-response reading excludes reasoning and progress metadata', async () => {
+  const reader = makeReader({
+    history: [['先生、こんにちは。', 'old']]
+  });
+  reader.groups[0].assistant.thinking.textContent = 'Implementing a plan';
+  reader.groups[0].assistant.progress.textContent = '実装中です。';
+  const result = await reader.contentCommand({ type: 'READ_LAST' });
+  assert.equal(result.ok, true);
+  assert.equal(reader.sent[0].type, 'SPEAK');
+  assert.equal(reader.sent[0].text, '先生、こんにちは。');
+});
 
 test('new Enter submission speaks incremental text, but manual STOP silences until the next send', async () => {
   const reader = makeReader({
