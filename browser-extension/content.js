@@ -6,7 +6,9 @@ const ASSISTANT_UNIT = '[data-content-search-unit-key$=":assistant"]';
 // The new ChatGPT layout identifies actual final response prose separately
 // from reasoning summaries, tool progress and commentary. Never read the turn
 // wrapper itself: it includes intermediate assistant status messages.
-const FINAL_ANSWER = '[data-markdown-text-style="assistant-message"]';
+// Chat/Work: thinking summaries use tertiary tone, even when their markdown
+// style is also "assistant-message". Never use style alone as proof of an answer.
+const FINAL_ANSWER = '[data-markdown-text-style="assistant-message"]:not([data-markdown-text-tone="tertiary"])';
 const LEGACY_ANSWER = '[data-message-author-role="assistant"], [data-role="assistant"], [data-message-author="assistant"]';
 const EXCLUDED_ANSWER_REGION = [
   // Commentary prose can be a genuine assistant message. Do not exclude it
@@ -16,6 +18,7 @@ const EXCLUDED_ANSWER_REGION = [
   '[data-testid*="progress"]', '[data-testid*="activity"]',
   '[data-testid*="tool-status"]', '[data-testid*="status"]',
   '[class*="thinking"]', '[class*="reasoning"]',
+  '[data-markdown-text-tone="tertiary"]',
   '[role="status"]', '[role="toolbar"]', 'details', 'summary',
   'nav', 'aside', '[hidden]', '[aria-hidden="true"]'
 ].join(',');
@@ -38,7 +41,8 @@ const UI_TO_REMOVE = [
   '[data-testid*="progress"]', '[data-testid*="activity"]',
   '[data-testid*="tool-status"]', '[data-testid*="status"]',
   '[data-message-phase="analysis"]', '[data-phase="analysis"]',
-  '[class*="thinking"]', '[class*="reasoning"]'
+  '[class*="thinking"]', '[class*="reasoning"]',
+  '[data-markdown-text-tone="tertiary"]'
 ].join(',');
 const LABEL_RE = /^(?:(?:ChatGPTの発言|ChatGPTの回答|ChatGPT said|ChatGPT:|Assistant:|アシスタントの発言|アシスタントの回答)\s*[:：]?\s*)+/i;
 
@@ -64,9 +68,17 @@ function finalAnswerRoots(root) {
   const matches = [];
   if (root.matches(FINAL_ANSWER)) matches.push(root);
   matches.push(...root.querySelectorAll(FINAL_ANSWER));
-  const safe = nodes => nodes.filter(node =>
-    !node.closest(EXCLUDED_ANSWER_REGION) &&
-    !node.closest('[data-user-message-bubble], [data-content-search-unit-key$=":user"], [data-message-author-role="user"]'));
+  const safe = nodes => nodes.filter(node => {
+    if (node.closest(EXCLUDED_ANSWER_REGION) ||
+        node.closest('[data-user-message-bubble], [data-content-search-unit-key$=":user"], [data-message-author-role="user"]')) {
+      return false;
+    }
+    // Legacy assistant messages include a temporary "Thinking" message
+    // with no model slug. Actual replies carry data-message-model-slug.
+    const legacyOwner = node.closest('[data-message-author-role="assistant"]');
+    if (legacyOwner && !legacyOwner.hasAttribute('data-message-model-slug')) return false;
+    return true;
+  });
   const styled = safe(matches);
   if (styled.length) {
     return styled.filter(node => !styled.some(parent => parent !== node && parent.contains(node)));
@@ -81,6 +93,8 @@ function finalAnswerRoots(root) {
   const blocks = [];
   for (const owner of owners) {
     if (owner.closest(EXCLUDED_ANSWER_REGION)) continue;
+    if (owner.matches('[data-message-author-role="assistant"]') &&
+        !owner.hasAttribute('data-message-model-slug')) continue;
     blocks.push(...owner.querySelectorAll(CONTENT));
   }
   const filtered = safe(blocks);
@@ -190,8 +204,10 @@ function arm(reason, { captureBaseline = true } = {}) {
   // One user action can fire both keyboard and button events; do not reset
   // the answer already being tracked for that same action.
   if (monitor.armed && Date.now() - monitor.armTime < 650) return;
+  // Sending a new prompt must NOT interrupt audio already playing.
+  // Only the first actual spoken chunk of the new reply (STREAM_START)
+  // switches playback. Explicit STOP still interrupts immediately.
   monitor.epoch++;
-  void queuedMessage('STOP', {}, monitor.epoch);
   if (captureBaseline) {
     const old = lastEntry();
     monitor.baselineNode = old?.node || null;
@@ -380,6 +396,7 @@ function diagnostics() {
     assistantCandidates: entries.length,
     lastTextChars: entries.at(-1)?.text.length || 0,
     finalAnswerRoots: document.querySelectorAll(FINAL_ANSWER).length,
+    tertiaryThinkingRoots: document.querySelectorAll('[data-markdown-text-style="assistant-message"][data-markdown-text-tone="tertiary"]').length,
     excludedStatusRoots: document.querySelectorAll('[data-testid*="reasoning"], [data-testid*="thinking"], [data-testid*="progress"], [data-testid*="activity"]').length,
     lastSource: entries.at(-1)?.source || 'なし',
     selectionChars: (window.getSelection()?.toString() || '').trim().length,
