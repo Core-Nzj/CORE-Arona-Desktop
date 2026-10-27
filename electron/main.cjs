@@ -13,6 +13,7 @@ const { VoiceCredentialStore } = require('./voice-credentials.cjs');
 const { ProxyManager } = require('./proxy-manager.cjs');
 const { BrowserCredentialPortal } = require('./browser-credentials.cjs');
 const { SpeechBridge } = require('./speech-bridge.cjs');
+const { readSpeechText, copySpeechToken } = require('./clipboard-actions.cjs');
 
 // Desktop speech may start from a native context-menu action.
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
@@ -339,6 +340,22 @@ function zoomAvatarWindow(action, anchorToCursor = false) {
   mainWindow.setBounds(bounds, false);
 }
 
+async function reportClipboardError(error) {
+  console.error('[CORE clipboard] operation failed:', error);
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  try {
+    await dialog.showMessageBox(mainWindow, {
+      type: 'error',
+      title: 'クリップボード操作エラー',
+      message: 'クリップボードを操作できませんでした',
+      detail: String(error?.message ?? error).slice(0, 500),
+      buttons: ['閉じる']
+    });
+  } catch (dialogError) {
+    console.warn('[CORE clipboard] unable to display error:', dialogError);
+  }
+}
+
 function showAvatarMenu() {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   const zoom = action => zoomAvatarWindow(action);
@@ -392,18 +409,28 @@ function showAvatarMenu() {
     },
     {
       label: 'クリップボードの文章を発話（最大500文字）',
-      click: () => {
-        const text = clipboard.readText().trim();
-        if (!text) return;
-        if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send('avatar:voice-text', text.slice(0, 500));
+      click: async () => {
+        try {
+          const text = await readSpeechText(clipboard);
+          if (!text) return;
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('avatar:voice-text', text);
+          }
+        } catch (error) {
+          await reportClipboardError(error);
         }
       }
     },
     {
       label: 'ChatGPT連携トークンをコピー',
       enabled: Boolean(speechBridge?.server),
-      click: () => { if (speechBridge?.token) clipboard.writeText(speechBridge.token); }
+      click: async () => {
+        try {
+          await copySpeechToken(clipboard, speechBridge?.token);
+        } catch (error) {
+          await reportClipboardError(error);
+        }
+      }
     },
     {
       label: '再生停止',
