@@ -36,8 +36,9 @@ const UI_TO_REMOVE = [
   '[role="status"]', '[role="toolbar"]', 'details', 'summary',
   '[data-testid*="reasoning"]', '[data-testid*="thinking"]',
   '[data-testid*="progress"]', '[data-testid*="activity"]',
-  '[data-testid*="tool-status"]', '[data-message-phase="analysis"]',
-  '[data-phase="analysis"]'
+  '[data-testid*="tool-status"]', '[data-testid*="status"]',
+  '[data-message-phase="analysis"]', '[data-phase="analysis"]',
+  '[class*="thinking"]', '[class*="reasoning"]'
 ].join(',');
 const LABEL_RE = /^(?:(?:ChatGPTの発言|ChatGPTの回答|ChatGPT said|ChatGPT:|Assistant:|アシスタントの発言|アシスタントの回答)\s*[:：]?\s*)+/i;
 
