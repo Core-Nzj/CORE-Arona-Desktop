@@ -25,7 +25,17 @@ async function enabled() {
   const prefs = await chrome.storage.local.get({ enabled: false, autoRead: true });
   return prefs.enabled === true && prefs.autoRead !== false;
 }
+let playbackTransport = Promise.resolve();
 async function desktopCommand(payload) {
+  if (['SPEAK', 'STREAM_START', 'STREAM_APPEND', 'STREAM_END', 'STOP'].includes(payload.type)) {
+    // Manual STOP must not be overtaken by an earlier, delayed HTTP request.
+    const request = playbackTransport.catch(() => {}).then(() => sendDesktopRequest(payload));
+    playbackTransport = request.catch(() => {});
+    return request;
+  }
+  return sendDesktopRequest(payload);
+}
+async function sendDesktopRequest(payload) {
   const { token } = await chrome.storage.local.get('token');
   if (!/^[a-f0-9]{64}$/.test(token || '')) {
     throw new Error('アロナ本体との接続トークンを設定してください');
