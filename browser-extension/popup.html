@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+body { font: 13px sans-serif; width: 310px; padding: 12px; color: #17202b; }
+label { display: block; margin: 8px 0; }
+input[type=password] { width: 100%; box-sizing: border-box; padding: 7px; }
+button { margin-top: 10px; padding: 7px 14px; }
+#status { font-size: 12px; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<div>CORE Arona Desktop 音声連携</div>
+<label>接続トークン（デスクトップの右クリックメニューからコピー）
+<input id="token" type="password" autocomplete="off" spellcheck="false"></label>
+<label><input id="enabled" type="checkbox"> 完了した新しい回答を自動で読み上げる</label>
+<button id="save" type="button">保存</button>
+<p id="status"></p>
+<script src="popup.js"></script>
+</body>
+</html>
