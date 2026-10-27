@@ -64,6 +64,10 @@ let emotionController = null;
 let lipSyncController = null;
 let activeRoot = null;
 let loadSequence = 0;
+// Camera radius is inversely proportional to the avatar's apparent size.
+// Halving the initial radius and the closest allowed radius makes both sizes ~2x larger.
+const INITIAL_RADIUS_FACTOR = 0.5;
+const CLOSEST_RADIUS_FACTOR = 0.15;
 let baseRadius = camera.radius;
 let regionDirty = false;
 let hitRegion = null;
@@ -202,15 +206,16 @@ function fitCamera(rootMesh) {
   camera.beta = Math.PI / 2;
   camera.radius = Math.max(verticalDistance, horizontalDistance, size.z * 2, 1) * 1.22;
   baseRadius = camera.radius;
+  camera.radius = baseRadius * INITIAL_RADIUS_FACTOR;
   regionDirty = true;
 }
 
 function zoom(action) {
   if (!activeContainer) return;
-  if (action === 'reset') camera.radius = baseRadius;
+  if (action === 'reset') camera.radius = baseRadius * INITIAL_RADIUS_FACTOR;
   else if (action === 'in' || action === 'out') {
     const factor = action === 'in' ? 0.85 : 1 / 0.85;
-    camera.radius = Math.min(baseRadius * 4, Math.max(baseRadius * 0.3, camera.radius * factor));
+    camera.radius = Math.min(baseRadius * 4, Math.max(baseRadius * CLOSEST_RADIUS_FACTOR, camera.radius * factor));
   } else return;
   regionDirty = true;
 }
