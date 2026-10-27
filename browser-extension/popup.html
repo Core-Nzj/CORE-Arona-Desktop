@@ -1,23 +1,62 @@
 <!doctype html>
 <html lang="ja">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<style>
-body { font: 13px sans-serif; width: 310px; padding: 12px; color: #17202b; }
-label { display: block; margin: 8px 0; }
-input[type=password] { width: 100%; box-sizing: border-box; padding: 7px; }
-button { margin-top: 10px; padding: 7px 14px; }
-#status { font-size: 12px; white-space: pre-wrap; }
-</style>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>CORE Arona Desktop Reader</title><link rel="stylesheet" href="popup.css">
 </head>
 <body>
-<div>CORE Arona Desktop 音声連携</div>
-<label>接続トークン（デスクトップの右クリックメニューからコピー）
-<input id="token" type="password" autocomplete="off" spellcheck="false"></label>
-<label><input id="enabled" type="checkbox"> 完了した新しい回答を自動で読み上げる</label>
-<button id="save" type="button">保存</button>
-<p id="status"></p>
+<main>
+  <header>
+    <div><h1>CORE Arona Desktop <span class="version">v0.7 Bridge</span></h1>
+      <p class="sub">Chrome · VoiSona Talk · MMD</p></div>
+    <span id="connection" class="connection">接続確認中…</span>
+  </header>
+
+  <details class="panel" open>
+    <summary>アロナ本体との接続</summary>
+    <label class="field" for="token">接続トークン（アロナ右クリックからコピー）</label>
+    <input id="token" type="password" autocomplete="off" spellcheck="false" placeholder="64文字の連携トークン">
+    <div class="actions slim"><button id="saveToken" class="secondary">接続トークンを保存・再接続</button></div>
+  </details>
+
+  <label class="toggle"><input id="auto" type="checkbox"> 新しい回答を自動読み上げ</label>
+  <label class="field" for="voice">使用するボイス</label>
+  <select id="voice"><option value="">読み込み中…</option></select>
+
+  <details class="panel" open>
+    <summary>声の調整 <span class="minor">6項目</span></summary>
+    <div id="parameterControls"></div>
+    <div class="actions slim"><button id="reset" class="secondary">このボイスの設定を初期化</button></div>
+  </details>
+
+  <details class="panel">
+    <summary>感情・スタイルの混合 <span class="minor">ボイス別</span></summary>
+    <div class="panelbody">
+      <p class="hint">スタイルはボイスごとに順序が異なります。APIから取得するか順番どおりに入力してください。</p>
+      <div class="style-auth">
+        <input id="apiUser" type="text" autocomplete="off" placeholder="APIユーザー名（本体設定済みなら空欄可）" aria-label="VoiSona APIユーザー名">
+        <input id="apiPassword" type="password" autocomplete="off" placeholder="APIパスワード（本体設定済みなら空欄可）" aria-label="VoiSona APIパスワード">
+        <button id="loadStyles" class="secondary">APIからスタイル一覧を取得</button>
+      </div>
+      <label for="manualStyles" class="field">手動入力（カンマ区切り）</label>
+      <textarea id="manualStyles" rows="2" placeholder="Normal, Happy, Sad, Angry"></textarea>
+      <button id="applyStyles" class="secondary small">スタイル名を反映</button>
+      <label class="toggle"><input id="enableStyles" type="checkbox"> 感情ミックスを適用する</label>
+      <div id="styleControls"></div>
+      <p class="hint" id="styleStatus" aria-live="polite">スタイル未設定です。</p>
+    </div>
+  </details>
+
+  <div class="actions"><button id="preview">今の設定で試聴</button><button id="stop" class="secondary">停止</button></div>
+  <div class="actions"><button id="read" class="secondary">最後の回答を読む</button><button id="selection" class="secondary">選択部分を読む</button></div>
+  <details class="panel diagnostics-panel">
+    <summary>診断・詳細</summary>
+    <div class="actions slim"><button id="diagnose" class="secondary">画面診断</button><button id="testAuto" class="secondary">自動読み上げ経路をテスト</button></div>
+    <pre id="diagnostic" class="diagnostic" hidden></pre>
+  </details>
+  <p class="status" id="status" aria-live="polite"></p>
+  <p class="hint footer">音声生成はアロナ本体が管理します。Chrome側は文章と設定だけを送信します。</p>
+</main>
 <script src="popup.js"></script>
 </body>
 </html>
