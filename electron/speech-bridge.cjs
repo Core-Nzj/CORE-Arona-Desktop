@@ -10,15 +10,16 @@ const { randomBytes, timingSafeEqual } = require('node:crypto');
 const HOST = '127.0.0.1';
 const PORT = 32779;
 const TOKEN_FILE = 'speech-bridge-token.dat';
-const MAX_BODY_BYTES = 16 * 1024;
+const MAX_BODY_BYTES = 64 * 1024;
 const MAX_TEXT_LENGTH = 500;
 
 class SpeechBridge {
-  constructor({ userDataPath, safeStorage, onText, port = PORT }) {
+  constructor({ userDataPath, safeStorage, onText, onCommand = null, port = PORT }) {
     this.userDataPath = userDataPath;
     this.port = port;
     this.safeStorage = safeStorage;
     this.onText = onText;
+    this.onCommand = onCommand;
     this.server = null;
     this.token = null;
   }
@@ -77,7 +78,7 @@ class SpeechBridge {
       });
       response.end(message);
     };
-    if (request.url !== '/speak' || request.method !== 'POST') return reply(404, 'Not found');
+    if (!['/speak', '/command'].includes(request.url) || request.method !== 'POST') return reply(404, 'Not found');
     if (request.headers.host !== HOST + ':' + (this.server?.address()?.port ?? this.port)) {
       return reply(403, 'Invalid host');
     }
@@ -98,11 +99,25 @@ class SpeechBridge {
     let payload;
     try { payload = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
     catch { return reply(400, 'Invalid JSON'); }
+    if (request.url === '/command') {
+      response.setHeader('Content-Type', 'application/json; charset=utf-8');
+      if (typeof this.onCommand !== 'function' || typeof payload?.type !== 'string') {
+        return reply(400, JSON.stringify({ ok: false, error: 'Invalid command' }));
+      }
+      try {
+        const result = await this.onCommand(payload);
+        return reply(200, JSON.stringify(result ?? { ok: true }));
+      } catch (error) {
+        return reply(200, JSON.stringify({
+          ok: false, error: String(error?.message ?? error).slice(0, 400)
+        }));
+      }
+    }
     const text = typeof payload?.text === 'string' ? payload.text.trim() : '';
     if (!text || text.length > MAX_TEXT_LENGTH || /[\x00-\x08\x0b\x0c\x0e-\x1f]/.test(text)) {
       return reply(400, 'Text must contain 1-500 characters');
     }
-    if (!this.onText(text)) return reply(503, 'Avatar window is unavailable');
+    if (typeof this.onText !== 'function' || !this.onText(text)) return reply(503, 'Avatar window is unavailable');
     return reply(202, 'Accepted');
   }
 
