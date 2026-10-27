@@ -70,7 +70,7 @@ class VoiceProxyClient {
     return data.items.map(normalizeVoice).filter(Boolean).slice(0, 50);
   }
 
-  async synthesize(text, voice, signal = undefined) {
+  async synthesize(text, voice, signal = undefined, globalParameters = null) {
     if (typeof text !== 'string' || !text.trim() || text.length > 500) {
       throw new VoiceProxyError('発話テキストは1～500文字で指定してください');
     }
@@ -83,6 +83,21 @@ class VoiceProxyClient {
       voice_name: safeVoice.voice_name
     };
     if (safeVoice.voice_version) payload.voice_version = safeVoice.voice_version;
+    // The desktop main process derives these whitelisted values from v0.7
+    // presets; never accept arbitrary VoiSona REST fields from the renderer.
+    if (globalParameters && typeof globalParameters === 'object') {
+      const names = ['speed', 'volume', 'pitch', 'intonation', 'alp', 'huskiness'];
+      const globals = {};
+      for (const name of names) {
+        if (Number.isFinite(globalParameters[name])) globals[name] = globalParameters[name];
+      }
+      if (Array.isArray(globalParameters.style_weights) &&
+          globalParameters.style_weights.length <= 30 &&
+          globalParameters.style_weights.every(n => Number.isFinite(n) && n >= 0 && n <= 1)) {
+        globals.style_weights = globalParameters.style_weights;
+      }
+      if (Object.keys(globals).length) payload.global_parameters = globals;
+    }
 
     const timeout = AbortSignal.timeout(60000);
     const response = await this.fetchImpl(PROXY_ORIGIN + '/speech-syntheses', {
