@@ -3,6 +3,21 @@
 // CORE VoiSona Reader v0.7 answer detector, carried into CORE-Arona-Desktop.
 // Only the service-worker/player transport changes. Never read user prompts.
 const ASSISTANT_UNIT = '[data-content-search-unit-key$=":assistant"]';
+// The new ChatGPT layout identifies actual final response prose separately
+// from reasoning summaries, tool progress and commentary. Never read the turn
+// wrapper itself: it includes intermediate assistant status messages.
+const FINAL_ANSWER = '[data-markdown-text-style="assistant-message"]';
+const LEGACY_ANSWER = '[data-message-author-role="assistant"], [data-role="assistant"], [data-message-author="assistant"]';
+const EXCLUDED_ANSWER_REGION = [
+  '[data-message-phase="analysis"]', '[data-message-phase="commentary"]',
+  '[data-phase="analysis"]', '[data-phase="commentary"]',
+  '[data-testid*="thinking"]', '[data-testid*="reasoning"]',
+  '[data-testid*="progress"]', '[data-testid*="activity"]',
+  '[data-testid*="tool-status"]', '[data-testid*="status"]',
+  '[class*="thinking"]', '[class*="reasoning"]',
+  '[role="status"]', '[role="toolbar"]', 'details', 'summary',
+  'nav', 'aside', '[hidden]', '[aria-hidden="true"]'
+].join(',');
 const CONTENT = [
   '.markdown', '.prose', '[data-testid="message-content"]',
   '[data-test-id="message-content"]', '[data-slot="message-content"]',
@@ -17,7 +32,12 @@ const UI_TO_REMOVE = [
   '[data-message-author-role="user"]', '[data-turn="user"]',
   '[data-role="user"]', '[data-conversation-role="user"]',
   '[data-testid="conversation-turn-action-bar"]',
-  '[role="status"]', '[role="toolbar"]'
+  '[role="status"]', '[role="toolbar"]', 'details', 'summary',
+  '[data-testid*="reasoning"]', '[data-testid*="thinking"]',
+  '[data-testid*="progress"]', '[data-testid*="activity"]',
+  '[data-testid*="tool-status"]', '[data-message-phase="commentary"]',
+  '[data-message-phase="analysis"]', '[data-phase="commentary"]',
+  '[data-phase="analysis"]'
 ].join(',');
 const LABEL_RE = /^(?:(?:ChatGPTの発言|ChatGPTの回答|ChatGPT said|ChatGPT:|Assistant:|アシスタントの発言|アシスタントの回答)\s*[:：]?\s*)+/i;
 
@@ -37,24 +57,45 @@ function safeText(element) {
   return cleanText(copy.textContent);
 }
 
+// Collect only independently identified final-answer roots, never arbitrary
+// markdown in an assistant turn. Thought summaries can contain markdown too.
+function finalAnswerRoots(root) {
+  const matches = [];
+  if (root.matches(FINAL_ANSWER)) matches.push(root);
+  matches.push(...root.querySelectorAll(FINAL_ANSWER));
+  const safe = nodes => nodes.filter(node =>
+    !node.closest(EXCLUDED_ANSWER_REGION) &&
+    !node.closest('[data-user-message-bubble], [data-content-search-unit-key$=":user"], [data-message-author-role="user"]'));
+  const styled = safe(matches);
+  if (styled.length) {
+    return styled.filter(node => !styled.some(parent => parent !== node && parent.contains(node)));
+  }
+
+  // Only the legacy assistant *message* root may use generic markdown.
+  // Do NOT do this for [data-turn-key] or assistant-unit: those can contain
+  // reasoning, commentary, activity/status, and intermediate updates.
+  const owners = [];
+  if (root.matches(LEGACY_ANSWER)) owners.push(root);
+  owners.push(...root.querySelectorAll(LEGACY_ANSWER));
+  const blocks = [];
+  for (const owner of owners) {
+    if (owner.closest(EXCLUDED_ANSWER_REGION)) continue;
+    blocks.push(...owner.querySelectorAll(CONTENT));
+  }
+  const filtered = safe(blocks);
+  return filtered.filter(node =>
+    !filtered.some(parent => parent !== node && parent.contains(node)));
+}
+
 function contentText(root) {
   if (!root) return '';
-  const targets = [...root.querySelectorAll(CONTENT)].filter(node =>
-    !node.closest('[data-user-message-bubble], [data-content-search-unit-key$=":user"], [data-message-author-role="user"]'));
-  const top = targets.filter(node => !targets.some(parent => parent !== node && parent.contains(node)));
-  return cleanText(top.map(safeText).filter(Boolean).join(' ')) || safeText(root);
+  return cleanText(finalAnswerRoots(root).map(safeText).filter(Boolean).join(' '));
 }
 
 function groupText(group) {
-  const units = [...group.querySelectorAll(ASSISTANT_UNIT)];
-  if (units.length) {
-    const text = cleanText(units.map(contentText).filter(Boolean).join(' '));
-    if (text) return text;
-  }
-  const blocks = [...group.querySelectorAll(CONTENT)].filter(node =>
-    !node.closest('[data-user-message-bubble], [data-content-search-unit-key$=":user"], [data-message-author-role="user"]'));
-  const top = blocks.filter(node => !blocks.some(parent => parent !== node && parent.contains(node)));
-  return cleanText(top.map(safeText).filter(Boolean).join(' ')) || safeText(group);
+  // A group can include many non-final assistant units. The final-answer
+  // attribute (or a legacy role-qualified message) is mandatory.
+  return contentText(group);
 }
 
 function assistantEntries() {
@@ -302,8 +343,10 @@ function scan() {
     monitor.lastFinishedAt = 0;
   }
   const stableFor = Date.now() - monitor.changeAt;
-  if (monitor.pending && (stableFor > 3000 ||
-      (stableFor > 1600 && monitor.pending.length >= 16))) drainSentences(true);
+  // Reasoning/status updates never flush partial final-answer text.
+  // Non-punctuated tails are read only once the answer itself has settled
+  // AND ChatGPT has left generating mode.
+  if (monitor.pending && !isGenerating() && stableFor > 1800) drainSentences(true);
   if (!isGenerating() && stableFor > 9000 &&
       monitor.streamOpen && !monitor.lastFinishedAt) {
     monitor.lastFinishedAt = Date.now();
@@ -335,6 +378,8 @@ function diagnostics() {
     counts,
     assistantCandidates: entries.length,
     lastTextChars: entries.at(-1)?.text.length || 0,
+    finalAnswerRoots: document.querySelectorAll(FINAL_ANSWER).length,
+    excludedStatusRoots: document.querySelectorAll('[data-testid*="reasoning"], [data-testid*="thinking"], [data-testid*="progress"], [data-testid*="activity"]').length,
     lastSource: entries.at(-1)?.source || 'なし',
     selectionChars: (window.getSelection()?.toString() || '').trim().length,
     mainTextChars: document.querySelector('main')?.innerText?.length || 0,
