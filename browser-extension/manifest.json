@@ -1,0 +1,17 @@
+{
+  "manifest_version": 3,
+  "name": "CORE Arona Desktop Chat Bridge",
+  "version": "0.1.0",
+  "description": "Send completed ChatGPT assistant responses to your local CORE desktop avatar.",
+  "permissions": ["storage"],
+  "host_permissions": ["http://127.0.0.1:32779/*"],
+  "background": { "service_worker": "background.js" },
+  "content_scripts": [
+    {
+      "matches": ["https://chatgpt.com/*", "https://chat.openai.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": { "default_popup": "popup.html" }
+}
