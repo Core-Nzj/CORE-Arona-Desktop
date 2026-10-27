@@ -124,3 +124,20 @@ test('sends GUI-supplied API credentials via Basic auth and never in the URL or 
   await client.listVoices();
   assert.equal(seen.at(-1).headers.Authorization, undefined);
 });
+
+
+test('sends only allowed v0.7 VoiSona voice parameters to the local proxy', async () => {
+  let payload;
+  const client = new VoiceProxyClient(async (_url, options) => {
+    payload = JSON.parse(options.body);
+    return new Response(makeWav(), { status: 200 });
+  });
+  await client.synthesize('先生、こんにちは。', sampleVoice, undefined, {
+    speed: 1.3, volume: 1, pitch: 80, intonation: 1.1, alp: 0.1,
+    huskiness: 2, style_weights: [0.3, 0.7], arbitrary_key: 'ignore'
+  });
+  assert.deepEqual(payload.global_parameters, {
+    speed: 1.3, volume: 1, pitch: 80, intonation: 1.1, alp: 0.1,
+    huskiness: 2, style_weights: [0.3, 0.7]
+  });
+});
