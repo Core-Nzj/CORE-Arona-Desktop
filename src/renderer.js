@@ -3,6 +3,7 @@ import { rectanglesFromAlpha } from './silhouette.mjs';
 import { buildIdleVmd, IDLE_FRAMES } from './idle-vmd.mjs';
 import { EmotionController } from './emotions.mjs';
 import { makeWebAudioBuffer } from './pcm-playback.mjs';
+import { LipSyncController, mouthLevelFromSamples } from './lip-sync.mjs';
 import { Engine } from '@babylonjs/core/Engines/engine';
 import { Scene } from '@babylonjs/core/scene';
 import { ArcRotateCamera } from '@babylonjs/core/Cameras/arcRotateCamera';
@@ -60,6 +61,7 @@ idleLoader.loggingEnabled = true;
 let activeContainer = null;
 let activeMmdModel = null;
 let emotionController = null;
+let lipSyncController = null;
 let activeRoot = null;
 let loadSequence = 0;
 let baseRadius = camera.radius;
@@ -73,9 +75,13 @@ let observedFrameTime = 0;
 let idlePlaybackCheckTimer = null;
 let activeSpeechSource = null;
 let activeSpeechContext = null;
+let activeSpeechAnalyser = null;
+const speechSamples = new Float32Array(1024);
 let speechGeneration = 0;
 
 function disposeSpeechAudio() {
+  activeSpeechAnalyser = null;
+  lipSyncController?.setLevel(0);
   const source = activeSpeechSource;
   activeSpeechSource = null;
   if (source) {
@@ -117,7 +123,11 @@ async function speakLatest(text) {
 
     const source = context.createBufferSource();
     source.buffer = audioBuffer;
-    source.connect(context.destination);
+    const analyser = context.createAnalyser();
+    analyser.fftSize = 1024;
+    source.connect(analyser);
+    analyser.connect(context.destination);
+    activeSpeechAnalyser = analyser;
     activeSpeechSource = source;
     source.onended = () => {
       if (generation !== speechGeneration || activeSpeechSource !== source) return;
@@ -377,6 +387,8 @@ async function loadModel(model) {
       emotionController.dispose();
       emotionController = null;
     }
+    lipSyncController?.dispose();
+    lipSyncController = null;
     reportEmotionState();
     activeMmdModel = null;
     activeContainer = nextContainer;
@@ -405,6 +417,7 @@ async function loadModel(model) {
     try {
       if (activeMmdModel?.morph) {
         emotionController = new EmotionController(activeMmdModel.morph);
+        lipSyncController = new LipSyncController(activeMmdModel.morph);
       }
     } catch (emotionError) {
       console.warn('Unable to initialize emotion controller:', emotionError);
@@ -502,13 +515,20 @@ window.aronaDesktop.onZoom(zoom);
 window.aronaDesktop.onModelChanged(loadModel);
 window.aronaDesktop.onEmotionChange(setEmotion);
 window.aronaDesktop.onVoiceTest(() => speakLatest('先生、こんにちは！ コア・アロナ・デスクトップから、お話ししています。'));
+window.aronaDesktop.onVoiceText(text => { void speakLatest(text); });
 window.aronaDesktop.onVoiceStop(stopSpeech);
 
 // Keep emotion morphs separate from VMD-driven blinking and future lip sync.
 // MmdRuntime is registered earlier, so this observer applies emotion weights
 // during the scene update without taking over the MMD animation tracks.
 scene.onBeforeRenderObservable.add(() => {
-  emotionController?.tick(Math.min(0.1, engine.getDeltaTime() / 1000));
+  const delta = Math.min(0.1, engine.getDeltaTime() / 1000);
+  emotionController?.tick(delta);
+  if (activeSpeechAnalyser && lipSyncController) {
+    activeSpeechAnalyser.getFloatTimeDomainData(speechSamples);
+    lipSyncController.setLevel(mouthLevelFromSamples(speechSamples));
+  } else lipSyncController?.setLevel(0);
+  lipSyncController?.tick(delta);
 });
 
 engine.runRenderLoop(() => {
