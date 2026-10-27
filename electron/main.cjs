@@ -1,6 +1,6 @@
 'use strict';
 
-const { app, BrowserWindow, dialog, ipcMain, Menu, protocol, screen, safeStorage, shell } = require('electron');
+const { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, protocol, screen, safeStorage, shell } = require('electron');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { resolveAssetPath } = require('./asset-path.cjs');
@@ -8,6 +8,7 @@ const { VoiceProxyClient, PROXY_ORIGIN } = require('./voice-proxy.cjs');
 const { VoiceCredentialStore } = require('./voice-credentials.cjs');
 const { ProxyManager } = require('./proxy-manager.cjs');
 const { BrowserCredentialPortal } = require('./browser-credentials.cjs');
+const { SpeechBridge } = require('./speech-bridge.cjs');
 
 // Desktop speech may start from a native context-menu action.
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
@@ -55,6 +56,8 @@ let voiceError = '接続を確認していません';
 let selectedVoiceName = null;
 let voiceSynthesis = null;
 let voicePlaybackStatus = 'テスト再生はまだ実行されていません';
+let speechBridge = null;
+let speechBridgeError = '';
 
 function isSettingsWindow(event) {
   return settingsWindow && !settingsWindow.isDestroyed() &&
@@ -144,6 +147,7 @@ function voiceDiagnostics() {
     '検出されたライブラリ数: ' + voiceEntries.length,
     '使用音声: ' + (selectedVoiceName ?? '未設定'),
     '再生状態: ' + voicePlaybackStatus,
+    'ChatGPT連携: ' + (speechBridge?.server ? '待受中 (127.0.0.1:32779)' : (speechBridgeError || '準備中')),
     '音声形式: ' + voiceClient.lastWavInfo,
     '',
     'Proxy管理: ' + (proxyManager.status().managed
@@ -364,6 +368,21 @@ function showAvatarMenu() {
       label: 'テスト発話',
       enabled: voiceEntries.length > 0,
       click: () => mainWindow?.webContents.send('avatar:voice-test')
+    },
+    {
+      label: 'クリップボードの文章を発話（最大500文字）',
+      click: () => {
+        const text = clipboard.readText().trim();
+        if (!text) return;
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('avatar:voice-text', text.slice(0, 500));
+        }
+      }
+    },
+    {
+      label: 'ChatGPT連携トークンをコピー',
+      enabled: Boolean(speechBridge?.server),
+      click: () => { if (speechBridge?.token) clipboard.writeText(speechBridge.token); }
     },
     {
       label: '再生停止',
@@ -619,6 +638,20 @@ app.whenReady().then(async () => {
     console.warn('[CORE Voice] encrypted settings cannot be restored:', error?.message);
   }
   createWindow();
+  speechBridge = new SpeechBridge({
+    userDataPath: app.getPath('userData'),
+    safeStorage,
+    onText: text => {
+      if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isLoading()) return false;
+      mainWindow.webContents.send('avatar:voice-text', text);
+      return true;
+    }
+  });
+  void speechBridge.start().catch(error => {
+    speechBridgeError = String(error?.message ?? error);
+    speechBridge = null;
+    console.warn('[CORE speech bridge] unable to listen:', speechBridgeError);
+  });
   // Check/launch localhost Python proxy without delaying model rendering.
   void startProxyAndRefresh();
 }).catch(error => {
@@ -626,5 +659,5 @@ app.whenReady().then(async () => {
   app.quit();
 });
 
-app.on('before-quit', () => { browserCredentialPortal?.close(); proxyManager.stop(); });
+app.on('before-quit', () => { browserCredentialPortal?.close(); speechBridge?.close(); proxyManager.stop(); });
 app.on('window-all-closed', () => app.quit());
