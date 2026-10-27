@@ -3,18 +3,32 @@
 export function splitSpeechText(text, limit = 280) {
   const pieces = [];
   let remaining = String(text || '').replace(/https?:\/\/\S+/g, ' リンク ')
-    .replace(/[`*_#>|~]/g, ' ').replace(/\s+/g, ' ').trim();
+    .replace(/[\x60*_#>|~]/g, ' ').replace(/\s+/g, ' ').trim();
+  const maxLength = Number.isFinite(limit) && limit >= 1 ? Math.floor(limit) : 280;
+
   while (remaining.length) {
-    if (remaining.length <= limit) { pieces.push(remaining); break; }
-    const windowText = remaining.slice(0, limit);
+    if (remaining.length <= maxLength) { pieces.push(remaining); break; }
+    const windowText = remaining.slice(0, maxLength);
+
+    // Prefer the last complete sentence in this window even when it is short.
+    // This keeps brief replies intact without producing many tiny chunks.
     let cut = -1;
-    for (const mark of ['。', '！', '？', '、', '，', '．', ' ', '；']) {
-      const at = windowText.lastIndexOf(mark);
-      if (at >= Math.floor(limit * 0.4) && at > cut) cut = at + 1;
+    for (const match of windowText.matchAll(/[。！？!?．](?:[」』）"'\u3011]*)/gu)) {
+      cut = match.index + match[0].length;
     }
-    if (cut <= 0) cut = limit;
-    pieces.push(remaining.slice(0, cut).trim());
-    remaining = remaining.slice(cut).trim();
+
+    // Without a sentence end, use a comma/space near the upper limit.
+    if (cut < 0) {
+      for (const mark of ['、', '，', '；', ' ']) {
+        const at = windowText.lastIndexOf(mark);
+        if (at >= Math.floor(maxLength * 0.4) && at + 1 > cut) cut = at + 1;
+      }
+    }
+    if (cut <= 0) cut = maxLength;
+
+    // Keep characters intact across chunks. The synth adapter trims them.
+    pieces.push(remaining.slice(0, cut));
+    remaining = remaining.slice(cut);
   }
   return pieces.filter(Boolean);
 }
