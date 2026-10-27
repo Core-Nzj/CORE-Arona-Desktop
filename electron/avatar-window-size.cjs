@@ -7,6 +7,7 @@ const INITIAL_SCALE = 2;
 const MIN_SCALE = 1;
 const MAX_SCALE = 20 / 3; // Old maximum relative to an automatically fitted model.
 const SCREEN_MARGIN = 8;
+const MAX_ZOOM_MULTIPLIER = 5; // Five times the displayed startup size.
 
 function maxScaleForArea(workArea) {
   if (!workArea || !Number.isFinite(workArea.width) || !Number.isFinite(workArea.height)) {
@@ -26,6 +27,19 @@ function clampScale(requestedScale, workArea) {
   return Math.max(minimum, Math.min(limit, requestedScale));
 }
 
+// Native resizing stops at the monitor bounds; optical zoom keeps going.
+function resolveZoomScale(requestedScale, workArea) {
+  const nativeLimit = maxScaleForArea(workArea);
+  const startScale = clampScale(INITIAL_SCALE, workArea);
+  const lower = Math.min(MIN_SCALE, nativeLimit);
+  const upper = startScale * MAX_ZOOM_MULTIPLIER;
+  const scale = Number.isFinite(requestedScale)
+    ? Math.max(lower, Math.min(upper, requestedScale)) : startScale;
+  const nativeScale = Math.min(scale, nativeLimit);
+  const cameraZoom = Math.min(MAX_ZOOM_MULTIPLIER, scale / nativeScale);
+  return { scale, nativeScale, cameraZoom };
+}
+
 function windowSizeForScale(scale) {
   return {
     width: Math.max(1, Math.floor(BASE_WIDTH * scale)),
@@ -34,8 +48,8 @@ function windowSizeForScale(scale) {
 }
 
 function boundsForScale(oldBounds, workArea, requestedScale, screenAnchor = null) {
-  const scale = clampScale(requestedScale, workArea);
-  const { width, height } = windowSizeForScale(scale);
+  const { scale, nativeScale, cameraZoom } = resolveZoomScale(requestedScale, workArea);
+  const { width, height } = windowSizeForScale(nativeScale);
 
   // Keep either the cursor's point on the model or its visual center stationary.
   const anchorX = Number.isFinite(screenAnchor?.x)
@@ -52,6 +66,8 @@ function boundsForScale(oldBounds, workArea, requestedScale, screenAnchor = null
     Math.max(min, Math.min(n, min + Math.max(0, span - windowSize)));
   return {
     scale,
+    nativeScale,
+    cameraZoom,
     bounds: {
       x: clampCoordinate(desiredX, workArea.x, workArea.width, width),
       y: clampCoordinate(desiredY, workArea.y, workArea.height, height),
@@ -63,5 +79,5 @@ function boundsForScale(oldBounds, workArea, requestedScale, screenAnchor = null
 
 module.exports = {
   BASE_WIDTH, BASE_HEIGHT, INITIAL_SCALE, MIN_SCALE,
-  maxScaleForArea, clampScale, windowSizeForScale, boundsForScale
+  maxScaleForArea, clampScale, resolveZoomScale, windowSizeForScale, boundsForScale
 };

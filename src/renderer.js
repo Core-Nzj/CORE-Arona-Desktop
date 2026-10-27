@@ -4,6 +4,7 @@ import { buildIdleVmd, IDLE_FRAMES } from './idle-vmd.mjs';
 import { EmotionController } from './emotions.mjs';
 import { makeWebAudioBuffer } from './pcm-playback.mjs';
 import { LipSyncController, mouthLevelFromSamples } from './lip-sync.mjs';
+import { approachZoom, fovForZoom } from './camera-zoom.mjs';
 import { Engine } from '@babylonjs/core/Engines/engine';
 import { Scene } from '@babylonjs/core/scene';
 import { ArcRotateCamera } from '@babylonjs/core/Cameras/arcRotateCamera';
@@ -44,8 +45,11 @@ scene.ambientColor = new Color3(0.5, 0.5, 0.5);
 const camera = new ArcRotateCamera(
   'avatar-camera', -Math.PI / 2, Math.PI / 2, 6, Vector3.Zero(), scene
 );
-camera.fov = 0.7;
+const BASE_CAMERA_FOV = 0.7;
+camera.fov = BASE_CAMERA_FOV;
 camera.minZ = 0.02;
+let renderedCameraZoom = 1;
+let targetCameraZoom = 1;
 
 const ambient = new HemisphericLight('ambient', new Vector3(0, 1, 0), scene);
 ambient.intensity = 1.15;
@@ -191,7 +195,8 @@ function fitCamera(rootMesh) {
   const center = bounds.min.add(bounds.max).scale(0.5);
   const height = Math.max(size.y, 0.3);
   const width = Math.max(size.x, 0.3);
-  const halfFov = camera.fov / 2;
+  // Model fitting must not depend on the current magnification.
+  const halfFov = BASE_CAMERA_FOV / 2;
   const verticalDistance = height / (2 * Math.tan(halfFov));
   const aspect = engine.getRenderWidth() / Math.max(1, engine.getRenderHeight());
   const horizontalDistance = width / (2 * Math.tan(halfFov) * Math.max(aspect, 0.1));
@@ -483,10 +488,28 @@ canvas.addEventListener('pointermove', () => {
   if (dragPointerId === null && avatarIsInteractive()) canvas.style.cursor = 'grab';
 });
 
+// Native shaped window resizing is expensive, so coalesce wheel bursts.
+let pendingWheelSteps = 0;
+let wheelFlushTimer = null;
+function flushWheelZoom() {
+  wheelFlushTimer = null;
+  if (!avatarIsInteractive()) { pendingWheelSteps = 0; return; }
+  const steps = Math.max(-2, Math.min(2, pendingWheelSteps));
+  pendingWheelSteps -= steps;
+  if (steps !== 0) window.aronaDesktop.zoom(steps);
+  if (pendingWheelSteps !== 0) {
+    wheelFlushTimer = setTimeout(flushWheelZoom, 65);
+  }
+}
 canvas.addEventListener('wheel', event => {
   if (!avatarIsInteractive()) return;
   event.preventDefault();
-  window.aronaDesktop.zoom(event.deltaY < 0 ? 'in' : 'out');
+  const direction = -Math.sign(event.deltaY);
+  if (direction === 0) return;
+  pendingWheelSteps = Math.max(-8, Math.min(8, pendingWheelSteps + direction));
+  if (wheelFlushTimer === null) {
+    wheelFlushTimer = setTimeout(flushWheelZoom, 65);
+  }
 }, { passive: false });
 
 chooseButton.addEventListener('click', async () => {
@@ -502,6 +525,11 @@ chooseButton.addEventListener('click', async () => {
 
 quitButton.addEventListener('click', () => window.aronaDesktop.quit());
 window.aronaDesktop.onModelChanged(loadModel);
+window.aronaDesktop.onCameraZoom(factor => {
+  if (typeof factor === 'number' && Number.isFinite(factor)) {
+    targetCameraZoom = Math.max(1, Math.min(5, factor));
+  }
+});
 window.aronaDesktop.onEmotionChange(setEmotion);
 window.aronaDesktop.onVoiceTest(() => speakLatest('先生、こんにちは！ コア・アロナ・デスクトップから、お話ししています。'));
 window.aronaDesktop.onVoiceText(text => { void speakLatest(text); });
@@ -512,6 +540,12 @@ window.aronaDesktop.onVoiceStop(stopSpeech);
 // during the scene update without taking over the MMD animation tracks.
 scene.onBeforeRenderObservable.add(() => {
   const delta = Math.min(0.1, engine.getDeltaTime() / 1000);
+  const nextZoom = approachZoom(renderedCameraZoom, targetCameraZoom, delta);
+  if (nextZoom !== renderedCameraZoom) {
+    renderedCameraZoom = nextZoom;
+    camera.fov = fovForZoom(BASE_CAMERA_FOV, renderedCameraZoom);
+    regionDirty = true;
+  }
   emotionController?.tick(delta);
   if (activeSpeechAnalyser && lipSyncController) {
     activeSpeechAnalyser.getFloatTimeDomainData(speechSamples);

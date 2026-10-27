@@ -51,3 +51,31 @@ test('reset restores initial scale subject to the current screen limit', () => {
   assert.equal(boundsForScale(old, area, INITIAL_SCALE).scale, 2);
   assert.equal(boundsForScale(old, area, -1).scale, 1);
 });
+
+test('camera zoom reaches 5x startup size on a 1080p work area', () => {
+  const { resolveZoomScale } = require('../electron/avatar-window-size.cjs');
+  const workArea = { x: 0, y: 0, width: 1920, height: 1080 };
+  const initialScale = clampScale(INITIAL_SCALE, workArea);
+  const max = resolveZoomScale(Infinity, workArea);
+  assert.equal(max.scale, initialScale);
+  const limit = resolveZoomScale(100, workArea);
+  assert.ok(Math.abs(limit.scale / initialScale - 5) < 1e-10);
+  assert.ok(Math.abs(limit.cameraZoom - 5) < 1e-10);
+  assert.equal(limit.nativeScale, maxScaleForArea(workArea));
+  assert.equal(resolveZoomScale(initialScale, workArea).cameraZoom, 1);
+});
+
+test('native resizing stops at monitor size while optical zoom continues', () => {
+  const { resolveZoomScale } = require('../electron/avatar-window-size.cjs');
+  const area = { x: 0, y: 0, width: 2560, height: 1440 };
+  assert.equal(resolveZoomScale(1.5, area).cameraZoom, 1);
+  const limit = maxScaleForArea(area);
+  const beyond = resolveZoomScale(limit * 1.5, area);
+  assert.equal(beyond.nativeScale, limit);
+  assert.ok(Math.abs(beyond.cameraZoom - 1.5) < 1e-10);
+  const old = { x: 150, y: 50, width: 950, height: 1424 };
+  const first = boundsForScale(old, area, limit * 1.5);
+  const second = boundsForScale(first.bounds, area, limit * 2);
+  assert.deepEqual(first.bounds, second.bounds);
+  assert.ok(second.cameraZoom > first.cameraZoom);
+});

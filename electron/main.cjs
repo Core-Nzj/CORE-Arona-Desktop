@@ -320,24 +320,27 @@ function startAvatarDrag() {
   }, 16);
 }
 
-function zoomAvatarWindow(action, anchorToCursor = false) {
+function zoomAvatarWindow(action) {
   if (!mainWindow || mainWindow.isDestroyed()) return;
-  if (!['in', 'out', 'reset'].includes(action)) return;
+  const steps = action === 'in' ? 1 : action === 'out' ? -1
+    : typeof action === 'number' && Number.isFinite(action) && Math.abs(action) <= 2
+      ? action : null;
+  if (action !== 'reset' && (steps === null || steps === 0)) return;
   const currentBounds = mainWindow.getBounds();
-  const pointer = anchorToCursor ? screen.getCursorScreenPoint() : null;
-  const display = pointer
-    ? screen.getDisplayNearestPoint(pointer)
-    : screen.getDisplayMatching(currentBounds);
-  const requestedScale = action === 'reset' ? INITIAL_SCALE
-    : avatarScale * (action === 'in' ? 1 / 0.85 : 0.85);
-  const { bounds, scale } = boundsForScale(
-    currentBounds, display.workArea, requestedScale, pointer
-  );
+  const workArea = screen.getDisplayMatching(currentBounds).workArea;
+  const requestedScale = action === 'reset'
+    ? clampScale(INITIAL_SCALE, workArea)
+    : avatarScale * Math.pow(1 / 0.85, steps);
+  // Center-based anchoring avoids the cursor/window oscillation on resize.
+  const { bounds, scale, cameraZoom } =
+    boundsForScale(currentBounds, workArea, requestedScale);
   avatarScale = scale;
-  if (bounds.x === currentBounds.x && bounds.y === currentBounds.y &&
-      bounds.width === currentBounds.width && bounds.height === currentBounds.height) return;
-  stopAvatarDrag();
-  mainWindow.setBounds(bounds, false);
+  if (bounds.x !== currentBounds.x || bounds.y !== currentBounds.y ||
+      bounds.width !== currentBounds.width || bounds.height !== currentBounds.height) {
+    stopAvatarDrag();
+    mainWindow.setBounds(bounds, false);
+  }
+  mainWindow.webContents.send('avatar:camera-zoom', cameraZoom);
 }
 
 async function reportClipboardError(error) {
@@ -556,6 +559,12 @@ function createWindow() {
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   mainWindow.webContents.on('will-navigate', event => event.preventDefault());
   mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
+  mainWindow.webContents.on('did-finish-load', () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    const area = screen.getDisplayMatching(mainWindow.getBounds()).workArea;
+    const { cameraZoom } = boundsForScale(mainWindow.getBounds(), area, avatarScale);
+    mainWindow.webContents.send('avatar:camera-zoom', cameraZoom);
+  });
   mainWindow.on('closed', () => { stopAvatarDrag(); voiceSynthesis?.abort(); mainWindow = null; });
 }
 
@@ -572,7 +581,7 @@ app.whenReady().then(async () => {
     if (isOurWindow(event) && currentModelFile) showAvatarMenu();
   });
   ipcMain.on('avatar:zoom', (event, action) => {
-    if (isOurWindow(event) && currentModelFile) zoomAvatarWindow(action, true);
+    if (isOurWindow(event) && currentModelFile) zoomAvatarWindow(action);
   });
   ipcMain.on('avatar:set-region', (event, rect) => {
     if (isOurWindow(event)) setAvatarRegion(rect);
