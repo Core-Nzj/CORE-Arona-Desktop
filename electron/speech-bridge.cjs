@@ -72,7 +72,7 @@ class SpeechBridge {
   async receive(request, response) {
     const reply = (status, message) => {
       response.writeHead(status, {
-        'Content-Type': 'text/plain; charset=utf-8',
+        'Content-Type': request.url === '/command' ? 'application/json; charset=utf-8' : 'text/plain; charset=utf-8',
         'Cache-Control': 'no-store',
         'X-Content-Type-Options': 'nosniff'
       });
@@ -100,7 +100,6 @@ class SpeechBridge {
     try { payload = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
     catch { return reply(400, 'Invalid JSON'); }
     if (request.url === '/command') {
-      response.setHeader('Content-Type', 'application/json; charset=utf-8');
       if (typeof this.onCommand !== 'function' || typeof payload?.type !== 'string') {
         return reply(400, JSON.stringify({ ok: false, error: 'Invalid command' }));
       }
