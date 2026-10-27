@@ -16,24 +16,36 @@ function makeReader({ history = [], userKeys = [], generating = false } = {}) {
   const windowEvents = {};
 
   class FakeElement {
-    constructor({ kind = '', text = '', key = '', parent = null, testId = '', aria = '' } = {}) {
-      Object.assign(this, { kind, textContent: text, key, parent, testId, aria });
+    constructor({ kind = '', text = '', key = '', parent = null, testId = '', aria = '',
+      tone = '', modelSlug = true } = {}) {
+      Object.assign(this, { kind, textContent: text, key, parent, testId, aria, tone, modelSlug });
       this.title = '';
     }
     matches(selector) {
       if (selector.includes('.sr-only')) return false;
       return (selector === '[data-turn-key]' && this.kind === 'group') ||
         (selector === '[data-content-search-unit-key$=":assistant"]' && this.kind === 'assistant') ||
-        (selector === '[data-markdown-text-style="assistant-message"]' &&
-         ['body', 'thinking', 'progress'].includes(this.kind));
+        (selector === '[data-markdown-text-style="assistant-message"]:not([data-markdown-text-tone="tertiary"])' &&
+         ['body', 'thinking', 'progress', 'summary'].includes(this.kind) && this.tone !== 'tertiary');
     }
     closest(selector) {
       if (this.kind === 'editor' && selector.includes('textarea')) return this;
       if (this.kind === 'button' && selector === 'button') return this;
       if (this.kind === 'thinking' && selector.includes('[data-testid*="thinking"]')) return this;
       if (this.kind === 'progress' && selector.includes('[data-testid*="progress"]')) return this;
+      if (this.tone === 'tertiary' && selector.includes('[data-markdown-text-tone="tertiary"]')) return this;
+      if (selector.includes('[data-message-author-role="assistant"]')) {
+        let owner = this;
+        while (owner) {
+          if (owner.kind === 'assistant') return owner;
+          owner = owner.parent;
+        }
+      }
       if (this.parent && selector.includes('[data-turn-key]')) return this.parent;
       return null;
+    }
+    hasAttribute(name) {
+      return name === 'data-message-model-slug' && this.kind === 'assistant' && this.modelSlug;
     }
     getAttribute(name) {
       if (name === 'data-turn-key' || name === 'data-content-search-unit-key') return this.key;
@@ -46,10 +58,11 @@ function makeReader({ history = [], userKeys = [], generating = false } = {}) {
     }
     querySelectorAll(selector) {
       if (this.kind === 'group' && selector.includes(':assistant')) return [this.assistant];
-      if (selector === '[data-markdown-text-style="assistant-message"]' &&
+      if (selector === '[data-markdown-text-style="assistant-message"]:not([data-markdown-text-tone="tertiary"])' &&
           ['group', 'assistant'].includes(this.kind)) {
-        return [this.assistant?.thinking, this.assistant?.progress,
-          this.assistant?.body].filter(node => node?.matches(selector));
+        const owner = this.kind === 'group' ? this.assistant : this;
+        return [owner?.thinking, owner?.progress, owner?.summary,
+          owner?.body].filter(node => node?.matches(selector));
       }
       if (this.kind === 'assistant' && selector.includes('.markdown')) return [this.body];
       return [];
@@ -67,6 +80,9 @@ function makeReader({ history = [], userKeys = [], generating = false } = {}) {
     });
     assistant.progress = new FakeElement({
       kind: 'progress', text: '', parent: assistant
+    });
+    assistant.summary = new FakeElement({
+      kind: 'summary', text: '', parent: assistant, tone: 'tertiary'
     });
     root.assistant = assistant;
     return root;
@@ -126,6 +142,70 @@ const settle = () => new Promise(resolve => setTimeout(resolve, 25));
 const chunks = reader => reader.sent.filter(message => message.type === 'STREAM_APPEND')
   .map(message => message.text);
 
+
+test('thinking-stage headings with assistant-message style but tertiary tone are silent', async () => {
+  const reader = makeReader({ generating: true });
+  reader.enter();
+  const entry = reader.group('', 'reply');
+  reader.groups.push(entry);
+  entry.assistant.summary.textContent = '原因を切り分ける';
+  reader.scan();
+  reader.advance(7000);
+  entry.assistant.summary.textContent = '実装方針を考える';
+  reader.scan();
+  await settle();
+  assert.deepEqual(chunks(reader), []);
+  assert.equal(reader.sent.filter(m => m.type === 'STREAM_START').length, 0);
+
+  entry.assistant.body.textContent = '先生、回答本文はここからです。';
+  reader.scan();
+  await settle();
+  assert.deepEqual(chunks(reader), ['先生、回答本文はここからです。']);
+});
+
+test('legacy assistant thinking pseudo-message without model slug is never spoken', async () => {
+  const reader = makeReader({ generating: true });
+  reader.enter();
+  const entry = reader.group('原因を切り分ける', 'pseudo');
+  entry.assistant.modelSlug = false;
+  reader.groups.push(entry);
+  reader.scan();
+  await settle();
+  assert.deepEqual(chunks(reader), []);
+  entry.assistant.modelSlug = true;
+  entry.assistant.body.textContent = '本文が表示されました。';
+  reader.scan();
+  await settle();
+  assert.deepEqual(chunks(reader), ['本文が表示されました。']);
+});
+
+test('sending a new message does not STOP speech already playing', async () => {
+  const reader = makeReader();
+  reader.enter();
+  reader.groups.push(reader.group('前の回答をまだ読み上げています。', 'old'));
+  reader.scan();
+  await settle();
+  assert.equal(reader.sent.filter(m => m.type === 'STREAM_START').length, 1);
+  assert.equal(reader.sent.filter(m => m.type === 'STOP').length, 0);
+  reader.advance(2000);
+  reader.enter();
+  await settle();
+  assert.equal(reader.sent.filter(m => m.type === 'STOP').length, 0);
+  assert.equal(reader.sent.filter(m => m.type === 'STREAM_START').length, 1);
+
+  const newTurn = reader.group('', 'new');
+  reader.groups.push(newTurn);
+  newTurn.assistant.summary.textContent = '原因を切り分ける';
+  reader.scan();
+  await settle();
+  assert.equal(reader.sent.filter(m => m.type === 'STREAM_START').length, 1);
+
+  newTurn.assistant.body.textContent = 'ここから新しい回答です。';
+  reader.scan();
+  await settle();
+  assert.equal(reader.sent.filter(m => m.type === 'STREAM_START').length, 2);
+  assert.equal(reader.sent.filter(m => m.type === 'STOP').length, 0);
+});
 
 test('reasoning and progress updates remain silent until final answer prose appears', async () => {
   const reader = makeReader({ history: [['古い回答です。', 'old']], generating: true });
@@ -211,7 +291,7 @@ test('new Enter submission speaks incremental text, but manual STOP silences unt
   reader.scan();
   await settle();
   assert.deepEqual(chunks(reader), ['新しい回答です。']);
-  assert.equal(reader.sent.filter(message => message.type === 'STOP').length, 1);
+  assert.equal(reader.sent.filter(message => message.type === 'STOP').length, 0);
 
   reader.manualStop();
   reader.groups[1].assistant.body.textContent = '新しい回答です。続きを読みます。';
@@ -296,7 +376,7 @@ test('pagehide cancels an active stream and does not replay it after hydration',
 
   reader.pagehide();
   await settle();
-  assert.equal(reader.sent.filter(message => message.type === 'STOP').length, 2);
+  assert.equal(reader.sent.filter(message => message.type === 'STOP').length, 1);
   reader.groups[0].assistant.body.textContent = '読み上げ中です。再読み込み後のテキスト。';
   reader.scan();
   await settle();
