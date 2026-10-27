@@ -236,7 +236,7 @@ Windows実機での音量追従、ChatGPT DOM検出、既存のクリック透�
 ### 更新・動作確認
 
 1. アプリを終了し、リポジトリのディレクトリで `git pull` → `npm test` → `npm start`。
-2. `chrome://extensions` で「CORE Arona Desktop Reader」の再読み込みボタンを押します。拡張フォルダーは引き続き `browser-extension` です。
+2. `chrome://extensions` で「CORE Arona Desktop Reader」の再読み込みボタンを押します。拡張フォルダーは引き続き `browser-extension` です。 旧「CORE VoiSona Reader v0.7」が別の拡張として有効なら、二重読み上げを防ぐためOFFにしてください。
 3. 拡張ポップアップの「接続トークン」を確認します。既存のトークンは同じ拡張として更新した場合、通常そのまま保存されています。必要ならアロナ右クリック→音声→「ChatGPT連携トークンをコピー」から再入力して「保存・再接続」。
 4. 「アロナ接続OK」とボイス一覧を確認し、「今の設定で試聴」を押して音声・MMD口パクを確認します。
 5. 自動読み上げON → ChatGPTタブをF5 → 新しい質問を送信。完成した文から読み上げるか、旧回答が再生されないかを確認します。
