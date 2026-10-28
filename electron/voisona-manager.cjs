@@ -16,12 +16,33 @@ function validExecutable(file) {
   return typeof file === 'string' && path.win32.basename(file).toLowerCase() === EXE.toLowerCase();
 }
 
-async function defaultCommand(action, pid = 0) {
+async function defaultCommand(action, pid = 0, handle = '') {
   const { stdout } = await execFileAsync('powershell.exe', [
     '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
-    '-File', SCRIPT, '-Action', action, '-TargetPid', String(pid)
-  ], { windowsHide: true, timeout: 9000, maxBuffer: 8192 });
+    '-File', SCRIPT, '-Action', action, '-TargetPid', String(pid),
+    '-TargetHandle', String(handle)
+  ], { windowsHide: true, timeout: 9000, maxBuffer: 32768 });
   return JSON.parse(stdout.trim());
+}
+
+// A JUCE application can own many titled top-level helper windows. Never
+// choose them merely because their title is non-empty or their PID matches.
+// Return null when no unique editor window can be identified safely.
+const HELPER_TITLE = /^(?:JUCEWindow|Windows Audio|DirectSound|JuceMidiDevice.*)$/i;
+function selectMainWindow(windows) {
+  if (!Array.isArray(windows)) return null;
+  const candidates = windows.filter(w =>
+    w && typeof w.title === 'string' && w.title.trim() &&
+    typeof w.handle === 'string' && /^[1-9][0-9]{0,17}$/.test(w.handle) &&
+    Number.isFinite(w.width) && w.width >= 500 &&
+    Number.isFinite(w.height) && w.height >= 300 &&
+    w.toolWindow !== true && !HELPER_TITLE.test(w.title.trim())
+  );
+  const named = candidates.filter(w => /voisona\s*talk/i.test(w.title));
+  const pool = named.length ? named : candidates;
+  // Multiple editor-sized windows (e.g. a modal settings dialog) are
+  // ambiguous. Prefer safety over accidentally revealing JUCE internals.
+  return pool.length === 1 ? pool[0] : null;
 }
 
 async function isFile(file) {
@@ -80,11 +101,12 @@ class VoiSonaManager {
     this.sleep = sleep;
     this.pid = null;
     this.ownedPid = null;
-    this.hiddenExternalPid = null;
+    this.hiddenExternalWindow = null;
     this.handedToUser = false;
     this.visible = false;
     this.running = false;
     this.hasWindow = false;
+    this.windowHandle = null;
     this.lastError = '';
     this.starting = null;
   }
@@ -107,13 +129,16 @@ class VoiSonaManager {
       const response = await this.run('list');
       const processes = Array.isArray(response?.processes) ? response.processes : [];
       const match = processes.find(x => x.pid === this.ownedPid) || processes[0] || null;
+      const mainWindow = selectMainWindow(match?.windows);
       this.pid = Number.isSafeInteger(match?.pid) ? match.pid : null;
       this.running = !!this.pid;
-      this.visible = !!match?.visible;
-      this.hasWindow = !!match?.hasWindow;
+      this.visible = mainWindow?.visible === true;
+      this.hasWindow = !!mainWindow;
+      this.windowHandle = mainWindow?.handle || null;
       if (this.ownedPid && !processes.some(x => x.pid === this.ownedPid)) this.ownedPid = null;
-      if (this.hiddenExternalPid && !processes.some(x => x.pid === this.hiddenExternalPid)) {
-        this.hiddenExternalPid = null;
+      if (this.hiddenExternalWindow &&
+          !processes.some(x => x.pid === this.hiddenExternalWindow.pid)) {
+        this.hiddenExternalWindow = null;
       }
       this.lastError = '';
     } catch (error) {
@@ -177,8 +202,10 @@ class VoiSonaManager {
     }
     // Auto-hide may only touch a process launched by this Arona instance.
     if (!manual && this.pid !== this.ownedPid) return this.status();
-    await this.run('hide', this.pid);
-    if (manual && this.pid !== this.ownedPid) this.hiddenExternalPid = this.pid;
+    await this.run('hide', this.pid, this.windowHandle);
+    if (manual && this.pid !== this.ownedPid) {
+      this.hiddenExternalWindow = { pid: this.pid, handle: this.windowHandle };
+    }
     return this.refresh();
   }
 
@@ -187,9 +214,9 @@ class VoiSonaManager {
     if (!this.running || !this.hasWindow || !this.pid) {
       throw new Error('VoiSona Talkのウィンドウを検出できません');
     }
-    await this.run('show', this.pid);
+    await this.run('show', this.pid, this.windowHandle);
     if (this.pid === this.ownedPid) this.handedToUser = true;
-    if (this.pid === this.hiddenExternalPid) this.hiddenExternalPid = null;
+    if (this.hiddenExternalWindow?.pid === this.pid) this.hiddenExternalWindow = null;
     return this.refresh();
   }
 
@@ -204,14 +231,18 @@ class VoiSonaManager {
     if (this.ownedPid && !this.handedToUser) {
       const current = await this.refresh();
       if (current.managed && current.hasWindow && !current.visible && !current.error) {
-        jobs.push(this.run('close', this.ownedPid));
+        jobs.push(this.run('close', this.ownedPid, this.windowHandle));
       }
     }
-    if (this.hiddenExternalPid) jobs.push(this.run('show', this.hiddenExternalPid));
+    if (this.hiddenExternalWindow) {
+      jobs.push(this.run('show', this.hiddenExternalWindow.pid, this.hiddenExternalWindow.handle));
+    }
     this.ownedPid = null;
-    this.hiddenExternalPid = null;
+    this.hiddenExternalWindow = null;
     await Promise.allSettled(jobs);
   }
 }
 
-module.exports = { VoiSonaManager, findExecutable, validExecutable, searchTechnoSpeech };
+module.exports = {
+  VoiSonaManager, findExecutable, validExecutable, searchTechnoSpeech, selectMainWindow
+};
