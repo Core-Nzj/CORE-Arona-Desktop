@@ -39,8 +39,9 @@ function renderState(state) {
   document.getElementById('voice-light').classList.toggle('online', !!state.voiceReady);
   const app = state.voisona || {};
   const engineStatus = !app.supported ? 'Windowsのみ対応' :
-    app.running ? '起動中 (' + (app.managed ? 'アロナ管理' : '既存プロセス') +
-      (app.visible ? '・表示中)' : '・非表示)') :
+    app.running ? (!app.hasWindow ? '起動中・メイン画面未検出（操作を保留）' :
+      '起動中 (' + (app.managed ? 'アロナ管理' : '既存プロセス') +
+      (app.visible ? '・表示中)' : '・非表示)')) :
       (app.error ? '未起動: ' + app.error : '停止中');
   document.getElementById('voisona-status').textContent = engineStatus;
   document.getElementById('voisona-light').classList.toggle('online', !!app.running);
