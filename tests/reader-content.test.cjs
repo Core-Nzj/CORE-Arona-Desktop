@@ -54,7 +54,8 @@ function makeReader({ history = [], userKeys = [], generating = false } = {}) {
       return null;
     }
     querySelector(selector) {
-      return this.kind === 'group' && selector.includes('assistant') ? this.assistant : null;
+      return this.kind === 'group' && this.assistantMarker !== false &&
+        selector.includes('assistant') ? this.assistant : null;
     }
     querySelectorAll(selector) {
       if (this.kind === 'group' && selector.includes(':assistant')) return [this.assistant];
@@ -90,9 +91,12 @@ function makeReader({ history = [], userKeys = [], generating = false } = {}) {
   const user = key => new FakeElement({ kind: 'user', key });
   const groups = history.map(([text, key]) => group(text, key));
   const users = userKeys.map(user);
+  const standalone = [];
   const document = {
     querySelectorAll(selector) {
-      if (selector.includes('data-turn-key') && selector.includes('article[data-turn')) return groups;
+      if (selector.includes('data-turn-key') && selector.includes('article[data-turn')) {
+        return [...groups, ...standalone];
+      }
       if (selector.includes(':user') || selector.includes('message-author-role="user"')) return users;
       return [];
     },
@@ -120,7 +124,7 @@ function makeReader({ history = [], userKeys = [], generating = false } = {}) {
     Date: { now: () => now }, Math, Element: FakeElement, console
   });
   return {
-    sent, events, windowEvents, groups, users, group, user,
+    sent, events, windowEvents, groups, users, standalone, group, user,
     scan: () => scan(),
     advance: ms => { now += ms; },
     setGenerating: value => { generating = value; },
@@ -142,6 +146,60 @@ const settle = () => new Promise(resolve => setTimeout(resolve, 25));
 const chunks = reader => reader.sent.filter(message => message.type === 'STREAM_APPEND')
   .map(message => message.text);
 
+
+
+test('completed answer in a new turn wrapper without assistant markers is read after partial speech', async () => {
+  const reader = makeReader({ generating: true });
+  reader.enter();
+  reader.groups.push(reader.group('先生、途中まで調査できました。', 'partial'));
+  reader.scan();
+  await settle();
+  assert.deepEqual(chunks(reader), ['先生、途中まで調査できました。']);
+
+  // During a long reasoning turn the UI may mount the completed answer in
+  // its own wrapper before adding assistant-unit / agent markers.
+  const finished = reader.group('こちらが最終的な回答です。', 'completed');
+  finished.assistantMarker = false;
+  reader.groups.push(finished);
+  reader.setGenerating(false);
+  reader.scan();
+  await settle();
+  assert.deepEqual(chunks(reader), [
+    '先生、途中まで調査できました。', 'こちらが最終的な回答です。'
+  ]);
+  assert.equal(reader.sent.filter(m => m.type === 'STREAM_START').length, 1);
+});
+
+test('standalone final-answer root appended after a partial answer keeps the same speech stream', async () => {
+  const reader = makeReader({ generating: true });
+  reader.enter();
+  reader.groups.push(reader.group('先にお伝えできる部分です。', 'partial'));
+  reader.scan();
+  await settle();
+
+  // The final-answer element can appear outside the original turn wrapper.
+  reader.standalone.push(reader.group('最後に追加された本文です。', 'orphan').assistant.body);
+  reader.setGenerating(false);
+  reader.scan();
+  await settle();
+  assert.deepEqual(chunks(reader), [
+    '先にお伝えできる部分です。', '最後に追加された本文です。'
+  ]);
+  assert.equal(reader.sent.filter(m => m.type === 'STREAM_START').length, 1);
+});
+
+test('a repeated sentence deliberately appended to a completed answer is not suppressed', async () => {
+  const reader = makeReader({ generating: true });
+  reader.enter();
+  const active = reader.group('了解しました。', 'answer');
+  reader.groups.push(active);
+  reader.scan();
+  await settle();
+  active.assistant.body.textContent = '了解しました。了解しました。';
+  reader.scan();
+  await settle();
+  assert.deepEqual(chunks(reader), ['了解しました。', '了解しました。']);
+});
 
 test('thinking-stage headings with assistant-message style but tertiary tone are silent', async () => {
   const reader = makeReader({ generating: true });
