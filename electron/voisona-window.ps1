@@ -37,9 +37,9 @@ function Get-WindowInfo([IntPtr]$window) {
   if ($length -le 0 -or $length -gt 1000) { return $null }
   $titleBuffer = New-Object System.Text.StringBuilder ($length + 1)
   [void][AronaVoiSonaWindows]::GetWindowText($window, $titleBuffer, $titleBuffer.Capacity)
-  $rect = New-Object AronaVoiSonaWindows+RECT
+  $rect = [AronaVoiSonaWindows+RECT]::new()
   if (-not [AronaVoiSonaWindows]::GetWindowRect($window, [ref]$rect)) { return $null }
-  $style = [AronaVoiSonaWindows]::GetWindowLongPtr($window, -20).ToInt64()
+  $style = ([AronaVoiSonaWindows]::GetWindowLongPtr($window, -20)).ToInt64()
   return [pscustomobject]@{
     handle = $window.ToInt64().ToString()
     title = $titleBuffer.ToString()
@@ -64,7 +64,7 @@ function Find-Windows([int]$processId) {
     return $true
   }
   [void][AronaVoiSonaWindows]::EnumWindows($callback, [IntPtr]::Zero)
-  return ,$items.ToArray()
+  return $items.ToArray()
 }
 
 if ($Action -eq 'list') {
