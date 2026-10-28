@@ -5,12 +5,14 @@
 const BASE = 'http://127.0.0.1:32779/command';
 const activeStreamByTab = new Map();
 const canceledStreamIds = new Set();
+let outputOwnerTabId = null;
+const CHAT_HOSTS = ['chatgpt.com', 'chat.openai.com'];
 
 function tabId(sender) { return sender.tab?.id ?? -1; }
 function allowedChatTab(sender) {
   const url = sender.url || sender.tab?.url;
   if (!url) return false;
-  try { return ['chatgpt.com', 'chat.openai.com'].includes(new URL(url).hostname); }
+  try { return CHAT_HOSTS.includes(new URL(url).hostname); }
   catch { return false; }
 }
 function blockStream(id) {
@@ -21,15 +23,57 @@ function blockStream(id) {
 async function setStatus(message) {
   await chrome.storage.local.set({ status: String(message), statusAt: Date.now() });
 }
-async function enabled() {
-  const prefs = await chrome.storage.local.get({ enabled: false, autoRead: true });
-  return prefs.enabled === true && prefs.autoRead !== false;
+// Modes persist across browser restarts. Tab IDs live in session storage to
+// avoid accidentally enabling unrelated tabs when Chrome recycles an ID.
+async function enabledFor(sender) {
+  const prefs = await chrome.storage.local.get({
+    readingMode: null, enabled: false, autoRead: true
+  });
+  const mode = ['all', 'selected', 'off'].includes(prefs.readingMode)
+    ? prefs.readingMode
+    : (prefs.enabled === true && prefs.autoRead !== false ? 'all' : 'off');
+  if (mode === 'all') return true;
+  if (mode !== 'selected') return false;
+  const id = tabId(sender);
+  if (!Number.isInteger(id) || id < 0) return false;
+  const { selectedTabIds = [] } = await chrome.storage.session.get({ selectedTabIds: [] });
+  return Array.isArray(selectedTabIds) && selectedTabIds.includes(id);
 }
+// F5/navigation must not stop another tab's audio. This check runs inside
+// the same serialized transport used for all playback commands.
+async function stopIfOwner(id) {
+  const task = playbackTransport.catch(() => {}).then(async () => {
+    if (outputOwnerTabId !== id) return { ok: true, skipped: true };
+    const result = await sendDesktopRequest({ type: 'STOP' });
+    outputOwnerTabId = null;
+    return result;
+  });
+  playbackTransport = task.catch(() => {});
+  return task;
+}
+function abandonTab(id) {
+  const stream = activeStreamByTab.get(id);
+  if (stream) blockStream(stream);
+  activeStreamByTab.delete(id);
+}
+chrome.tabs.onRemoved.addListener(id => {
+  abandonTab(id);
+  void chrome.storage.session.get({ selectedTabIds: [] }).then(({ selectedTabIds }) => {
+    if (!Array.isArray(selectedTabIds) || !selectedTabIds.includes(id)) return;
+    return chrome.storage.session.set({ selectedTabIds: selectedTabIds.filter(item => item !== id) });
+  }).catch(() => {});
+});
 let playbackTransport = Promise.resolve();
-async function desktopCommand(payload) {
+async function desktopCommand(payload, ownerTabId = null) {
   if (['SPEAK', 'STREAM_START', 'STREAM_APPEND', 'STREAM_END', 'STOP'].includes(payload.type)) {
-    // Manual STOP must not be overtaken by an earlier, delayed HTTP request.
-    const request = playbackTransport.catch(() => {}).then(() => sendDesktopRequest(payload));
+    // Preserve order across tabs; update ownership after the request arrives.
+    const request = playbackTransport.catch(() => {}).then(async () => {
+      const result = await sendDesktopRequest(payload);
+      if (payload.type === 'STREAM_START' || payload.type === 'SPEAK') {
+        outputOwnerTabId = ownerTabId;
+      } else if (payload.type === 'STOP') outputOwnerTabId = null;
+      return result;
+    });
     playbackTransport = request.catch(() => {});
     return request;
   }
@@ -70,7 +114,7 @@ async function handle(request, sender) {
       });
     }
     case 'SPEAK': {
-      if (!request.manual && !(await enabled())) return { ok: true, skipped: true };
+      if (!request.manual && !(await enabledFor(sender))) return { ok: true, skipped: true };
       if (typeof request.text !== 'string' || !request.text.trim()) {
         throw new Error('読み上げる文章がありません');
       }
@@ -79,10 +123,10 @@ async function handle(request, sender) {
       });
       return desktopCommand({
         type, text: request.text.slice(0, 9000), voice, voiceProfiles
-      });
+      }, sender.tab ? tabId(sender) : null);
     }
     case 'STREAM_START': {
-      if (!(await enabled())) return { ok: true, skipped: true };
+      if (!(await enabledFor(sender))) return { ok: true, skipped: true };
       const { streamId } = request;
       if (typeof streamId !== 'string' || !streamId || streamId.length > 100) {
         throw new Error('不正なstreamIdです');
@@ -92,10 +136,13 @@ async function handle(request, sender) {
         voice: null, voiceProfiles: {}
       });
       activeStreamByTab.set(tabId(sender), streamId);
-      return desktopCommand({ type, streamId, voice, voiceProfiles });
+      return desktopCommand({ type, streamId, voice, voiceProfiles }, tabId(sender));
     }
     case 'STREAM_APPEND': {
-      if (!(await enabled())) return { ok: true, skipped: true };
+      if (!(await enabledFor(sender))) {
+        abandonTab(tabId(sender));
+        return { ok: true, skipped: true };
+      }
       const { streamId, seq, text } = request;
       if (typeof streamId !== 'string' || typeof text !== 'string' ||
           !Number.isSafeInteger(seq) || seq < 0) throw new Error('ストリーム情報が不正です');
@@ -105,6 +152,10 @@ async function handle(request, sender) {
       return desktopCommand({ type, streamId, seq, text: text.slice(0, 480) });
     }
     case 'STREAM_END': {
+      if (!(await enabledFor(sender))) {
+        abandonTab(tabId(sender));
+        return { ok: true, skipped: true };
+      }
       if (activeStreamByTab.get(tabId(sender)) !== request.streamId) {
         return { ok: true, skipped: true };
       }
@@ -114,6 +165,12 @@ async function handle(request, sender) {
       return result;
     }
     case 'STOP': {
+      if (sender.tab && !request.manual) {
+        // A pagehide/F5 STOP is scoped to the initiating tab.
+        const id = tabId(sender);
+        abandonTab(id);
+        return stopIfOwner(id);
+      }
       for (const id of activeStreamByTab.values()) blockStream(id);
       activeStreamByTab.clear();
       if (request.manual) {
