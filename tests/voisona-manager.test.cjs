@@ -83,6 +83,14 @@ test('starts installed VoiSona and hides only the owned editor window', async ()
   assert.ok(operations.some(x => x.action === 'close' && x.pid === 3456));
 });
 
+test('does not close a newly launched editor left visible for API setup', async () => {
+  const { manager, processes, operations } = makeWindows();
+  await manager.ensureRunning();
+  assert.equal(processes[0].visible, true);
+  await manager.shutdown();
+  assert.equal(operations.some(x => x.action === 'close'), false);
+});
+
 test('manual show hands ownership of an app-launched editor to the user', async () => {
   const { manager, processes, operations } = makeWindows();
   await manager.ensureRunning();
