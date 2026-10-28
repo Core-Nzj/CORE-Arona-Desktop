@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "CORE Arona Desktop Reader",
-  "version": "0.7.1",
+  "version": "0.8.0",
   "description": "CORE VoiSona Reader v0.7 incremental answer reader using CORE-Arona-Desktop's local voice queue.",
   "minimum_chrome_version": "116",
   "permissions": [
@@ -9,7 +9,9 @@
     "activeTab"
   ],
   "host_permissions": [
-    "http://127.0.0.1:32779/*"
+    "http://127.0.0.1:32779/*",
+    "https://chatgpt.com/*",
+    "https://chat.openai.com/*"
   ],
   "background": {
     "service_worker": "background.js"
