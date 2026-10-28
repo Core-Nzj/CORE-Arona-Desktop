@@ -113,16 +113,21 @@ async function startIntegratedVoice() {
   }
   await startProxyAndRefresh();
   if (!voisonaPrefs.autoHide || !voisonaManager.status().managed || !credentials) return;
-  // The editor may take a few seconds to initialize its REST API.
-  // Leave the window visible when login or initial API configuration is needed.
+  // The editor and REST API may become ready at different times.
+  // Wait for BOTH before hiding; never fall back to a JUCE helper window.
+  // Leave the GUI visible when first-run login or API setup is necessary.
   for (let attempt = 0; attempt < 10; attempt++) {
     if (voiceEntries.length && !voiceError) {
-      try { await voisonaManager.hide(); }
-      catch (error) { console.warn('[CORE Voice] auto-hide failed:', error?.message); }
-      return;
+      const state = await voisonaManager.refresh();
+      if (!state.managed || !state.running) return;
+      if (state.hasWindow) {
+        try { await voisonaManager.hide(); }
+        catch (error) { console.warn('[CORE Voice] auto-hide failed:', error?.message); }
+        return;
+      }
     }
     await new Promise(resolve => setTimeout(resolve, 1000));
-    await refreshVoices();
+    if (!voiceEntries.length || voiceError) await refreshVoices();
   }
 }
 
