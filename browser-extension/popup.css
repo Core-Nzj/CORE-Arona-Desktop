@@ -15,3 +15,18 @@ button{padding:9px 10px;background:#8cd1ff;color:#102032;font-weight:650;border:
 .style-row{grid-template-columns:91px 1fr 57px}.style-row .valuebox input{width:39px}
 .status{white-space:pre-wrap;overflow-wrap:anywhere;min-height:18px;font-size:12px;color:#dcecff;line-height:1.5;margin:12px 0 4px}
 .diagnostic{font-size:11px;white-space:pre-wrap;overflow-wrap:anywhere;background:#0f1725;border-radius:7px;padding:10px;color:#d7e3f9}
+/* Tab-specific automatic reading: compact control surface, one row per tab. */
+[hidden]{display:none!important}
+.read-mode-panel{margin:10px 0 13px;padding:9px 11px 11px;background:#202c40;border:1px solid #334761;border-radius:9px}
+.read-mode-panel .field{margin:0 0 7px;font-weight:650}
+.read-mode-panel select{font-size:12px}
+.tabs-header{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:11px 0 7px}
+.tabs-header .minor{font-size:11px;color:#b1bed7}
+button.compact{flex:0 0 auto;padding:5px 9px;font-size:11px}
+.chat-tabs{display:grid;gap:5px;max-height:176px;overflow-y:auto}
+.tab-choice{display:flex;gap:8px;align-items:center;padding:8px;background:#27364d;border:1px solid #394d69;border-radius:7px;cursor:pointer;min-width:0}
+.tab-choice:has(input:checked){border-color:#65baff;background:#2a4260}
+.tab-choice input{flex:0 0 auto;accent-color:#65baff}
+.tab-title{font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1}
+.tab-current{flex:0 0 auto;font-size:10px;color:#8fc7f5}
+.tabs-hint{margin:8px 0 0}
