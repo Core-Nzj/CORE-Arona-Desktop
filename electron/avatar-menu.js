@@ -37,6 +37,19 @@ function renderState(state) {
   document.getElementById('model-name').textContent = state.modelName || '未選択';
   document.getElementById('voice-status').textContent = state.voiceStatus || '未接続';
   document.getElementById('voice-light').classList.toggle('online', !!state.voiceReady);
+  const app = state.voisona || {};
+  const engineStatus = !app.supported ? 'Windowsのみ対応' :
+    app.running ? '起動中 (' + (app.managed ? 'アロナ管理' : '既存プロセス') +
+      (app.visible ? '・表示中)' : '・非表示)') :
+      (app.error ? '未起動: ' + app.error : '停止中');
+  document.getElementById('voisona-status').textContent = engineStatus;
+  document.getElementById('voisona-light').classList.toggle('online', !!app.running);
+  document.getElementById('voisona-autostart').textContent = '自動起動 ' + (app.autoStart ? 'ON' : 'OFF');
+  document.getElementById('voisona-autohide').textContent = '自動非表示 ' + (app.autoHide ? 'ON' : 'OFF');
+  document.getElementById('voisona-autostart').setAttribute('aria-pressed', String(!!app.autoStart));
+  document.getElementById('voisona-autohide').setAttribute('aria-pressed', String(!!app.autoHide));
+  document.getElementById('voisona-show').disabled = !app.running || !app.hasWindow;
+  document.getElementById('voisona-hide').disabled = !app.running || !app.hasWindow || !app.visible;
   const voices = Array.isArray(state.voices) ? state.voices : [];
   const voiceButtons = voices.map(voice =>
     makeOption(voice.name, voice.name, !!voice.selected, true, 'voice.select'));
@@ -54,7 +67,10 @@ function renderState(state) {
     makeOption(label,id,state.emotion?.selected === id,
       state.emotion?.available?.[id] === true,'emotion.select')));
 }
-const keepOpen = new Set(['voice.refresh','voice.select','emotion.select']);
+const keepOpen = new Set([
+  'voice.refresh', 'voice.select', 'emotion.select',
+  'voice.autoStart', 'voice.autoHide', 'voice.appHide'
+]);
 async function runAction(action, value) {
   if (busy) return;
   busy = true;
