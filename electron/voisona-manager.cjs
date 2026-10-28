@@ -198,7 +198,15 @@ class VoiSonaManager {
     // Pre-existing VoiSona is NEVER closed; if Arona hid it explicitly,
     // restore it so the user is not stranded with an invisible process.
     const jobs = [];
-    if (this.ownedPid && !this.handedToUser) jobs.push(this.run('close', this.ownedPid));
+    // A visible editor may be in use (login, API setup, unsaved projects).
+    // Even if Arona launched it, do not close a visible GUI behind the user's
+    // back. Close only our own *hidden* window after a successful fresh check.
+    if (this.ownedPid && !this.handedToUser) {
+      const current = await this.refresh();
+      if (current.managed && current.hasWindow && !current.visible && !current.error) {
+        jobs.push(this.run('close', this.ownedPid));
+      }
+    }
     if (this.hiddenExternalPid) jobs.push(this.run('show', this.hiddenExternalPid));
     this.ownedPid = null;
     this.hiddenExternalPid = null;
