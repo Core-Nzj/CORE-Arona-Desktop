@@ -5,7 +5,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false) } catch { /* use host encoding */ }
 
 # Window enumeration only. The Electron main process selects one verified
 # editor window. Never enumerate-and-show all JUCE/Windows Audio helper windows.
