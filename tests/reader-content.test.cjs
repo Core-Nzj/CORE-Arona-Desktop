@@ -178,7 +178,9 @@ test('standalone final-answer root appended after a partial answer keeps the sam
   await settle();
 
   // The final-answer element can appear outside the original turn wrapper.
-  reader.standalone.push(reader.group('最後に追加された本文です。', 'orphan').assistant.body);
+  const standaloneAnswer = reader.group('最後に追加された本文です。', 'orphan').assistant.body;
+  standaloneAnswer.parent = null;
+  reader.standalone.push(standaloneAnswer);
   reader.setGenerating(false);
   reader.scan();
   await settle();
