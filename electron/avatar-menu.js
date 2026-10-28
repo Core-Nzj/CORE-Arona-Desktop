@@ -49,6 +49,10 @@ function renderState(state) {
   document.getElementById('voisona-autohide').textContent = '自動非表示 ' + (app.autoHide ? 'ON' : 'OFF');
   document.getElementById('voisona-autostart').setAttribute('aria-pressed', String(!!app.autoStart));
   document.getElementById('voisona-autohide').setAttribute('aria-pressed', String(!!app.autoHide));
+  // Launch is only available while VoiSona Talk is stopped.
+  // A missing main window does not mean the process has stopped.
+  document.querySelector('[data-action="voice.appStart"]').disabled =
+    !!app.running || app.supported === false;
   document.getElementById('voisona-show').disabled = !app.running || !app.hasWindow;
   document.getElementById('voisona-hide').disabled = !app.running || !app.hasWindow || !app.visible;
   const voices = Array.isArray(state.voices) ? state.voices : [];
