@@ -98,7 +98,7 @@ $info = Get-WindowInfo $window
 # Also validate here, even if the renderer/controller was compromised or the
 # original HWND got recycled between selection and command dispatch.
 if ($null -eq $info -or $info.toolWindow -or $info.width -lt 500 -or
-    $info.height -lt 300 -or $info.title -match '^(JUCEWindow|Windows Audio|DirectSound|JuceMidiDevice.*)$') {
+    $info.height -lt 300 -or $info.title -match '^(JUCEWindow|Windows Audio|DirectSound|JuceMidiDevice)') {
   throw 'Target is not a VoiSona main editor window'
 }
 
