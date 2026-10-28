@@ -28,7 +28,7 @@ async function defaultCommand(action, pid = 0, handle = '') {
 // A JUCE application can own many titled top-level helper windows. Never
 // choose them merely because their title is non-empty or their PID matches.
 // Return null when no unique editor window can be identified safely.
-const HELPER_TITLE = /^(?:JUCEWindow|Windows Audio|DirectSound|JuceMidiDevice.*)$/i;
+const HELPER_TITLE = /^(?:JUCEWindow|Windows Audio|DirectSound|JuceMidiDevice)/i;
 function selectMainWindow(windows) {
   if (!Array.isArray(windows)) return null;
   const candidates = windows.filter(w =>
