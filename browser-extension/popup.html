@@ -19,7 +19,22 @@
     <div class="actions slim"><button id="saveToken" class="secondary">接続トークンを保存・再接続</button></div>
   </details>
 
-  <label class="toggle"><input id="auto" type="checkbox"> 新しい回答を自動読み上げ</label>
+  <section class="read-mode-panel" aria-label="自動読み上げ対象">
+    <label class="field" for="readingMode">新しい回答の自動読み上げ</label>
+    <select id="readingMode">
+      <option value="all">全部ON（すべてのChatGPTタブ）</option>
+      <option value="selected">選択タブのみ（複数選択可能）</option>
+      <option value="off">全部OFF</option>
+    </select>
+    <div id="tabChooser" hidden>
+      <div class="tabs-header">
+        <span class="minor">読み上げを許可するタブ</span>
+        <button id="refreshTabs" class="secondary compact" type="button">一覧更新</button>
+      </div>
+      <div id="chatTabs" class="chat-tabs" role="group" aria-label="ChatGPTタブ一覧"></div>
+      <p class="hint tabs-hint">チェックしたタブだけ自動読み上げします。閉じたタブの設定は削除されます。</p>
+    </div>
+  </section>
   <label class="field" for="voice">使用するボイス</label>
   <select id="voice"><option value="">読み込み中…</option></select>
 
