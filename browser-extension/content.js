@@ -119,7 +119,10 @@ function assistantEntries() {
     '[data-message-author-role="assistant"]',
     '[data-content-search-unit-key$=":assistant"]',
     '[data-turn="assistant"]', '[data-role="assistant"]',
-    '[data-message-author="assistant"]', '.agent-turn'
+    '[data-message-author="assistant"]', '.agent-turn',
+    // During long reasoning, a completed answer can be mounted as a fresh
+    // styled block before its usual assistant turn metadata is present.
+    FINAL_ANSWER
   ].join(','))];
   const result = [];
   for (const node of roots) {
@@ -127,16 +130,24 @@ function assistantEntries() {
     if (node.matches('.sr-only, [hidden], [aria-hidden="true"]')) continue;
     const group = node.matches('[data-turn-key]');
     if (node.closest('[data-turn-key]') && !group) continue;
+    // Styled response roots inside a recognized wrapper are already included
+    // by that wrapper. Only collect a standalone root when no wrapper exists.
+    if (node.matches(FINAL_ANSWER) && node.closest(
+      '[data-turn-key], article[data-turn="assistant"], [data-message-author-role="assistant"], ' +
+      '[data-content-search-unit-key$=":assistant"], [data-turn="assistant"], ' +
+      '[data-role="assistant"], [data-message-author="assistant"], .agent-turn'
+    )) continue;
     if (group && !node.querySelector(
       ASSISTANT_UNIT + ', [data-conversation-role="assistant"], [data-chatgpt-agent-turn-start], [data-message-author-role="assistant"]'
-    )) continue;
+    ) && !finalAnswerRoots(node).some(answer => answer.matches(FINAL_ANSWER))) continue;
     if (!group && node.closest('article[data-turn="assistant"]') &&
         !node.matches('article[data-turn="assistant"]')) continue;
     if (!group && node.closest('[data-message-author-role="assistant"]') &&
         !node.matches('[data-message-author-role="assistant"]')) continue;
     const text = group ? groupText(node) : contentText(node);
     if (text) result.push({
-      node, text, source: group ? 'turn-key' : node.matches(ASSISTANT_UNIT) ? 'assistant-unit' : 'legacy'
+      node, text, source: group ? 'turn-key' : node.matches(FINAL_ANSWER) ? 'answer-block' :
+        node.matches(ASSISTANT_UNIT) ? 'assistant-unit' : 'legacy'
     });
   }
   return result;
@@ -158,7 +169,7 @@ const monitor = {
   streamId: '', streamOpen: false, nextSeq: 0, epoch: 0,
   lastAction: '初期化中', sentCount: 0, lastError: '',
   currentUrl: location.href, latestUser: '',
-  muted: false, seenSnapshots: new Set(), seenParts: new Set(),
+  muted: false, seenSnapshots: new Set(),
   lastFinishedAt: 0
 };
 
@@ -225,7 +236,6 @@ function arm(reason, { captureBaseline = true } = {}) {
   monitor.nextSeq = 0;
   monitor.sentCount = 0;
   monitor.seenSnapshots = new Set();
-  monitor.seenParts = new Set();
   monitor.lastFinishedAt = 0;
   monitor.lastError = '';
   monitor.lastAction = '新しい回答の表示を待機中 (' + reason + ')';
@@ -271,9 +281,9 @@ function ensureStream() {
 function emitPart(part) {
   part = cleanText(part);
   if (!part || part.length < 2 || monitor.muted) return;
-  const key = part.replace(/\s+/g, ' ').trim();
-  if (monitor.seenParts.has(key)) return;
-  monitor.seenParts.add(key);
+  // Snapshot/cursor tracking prevents accidental replay. A global text-key
+  // deduper would incorrectly suppress a legitimately repeated sentence in
+  // the final answer after it was spoken during a partial answer.
   ensureStream();
   monitor.sentCount++;
   monitor.lastAction = '逐次読み上げ送信（' + part.length +
