@@ -11,6 +11,7 @@ const {
 const { VoiceProxyClient, PROXY_ORIGIN } = require('./voice-proxy.cjs');
 const { VoiceCredentialStore } = require('./voice-credentials.cjs');
 const { ProxyManager } = require('./proxy-manager.cjs');
+const { VoiSonaManager } = require('./voisona-manager.cjs');
 const { BrowserCredentialPortal } = require('./browser-credentials.cjs');
 const { SpeechBridge } = require('./speech-bridge.cjs');
 const { readSpeechText, copySpeechToken } = require('./clipboard-actions.cjs');
@@ -49,6 +50,8 @@ let avatarScale = INITIAL_SCALE;
 let settingsWindow = null;
 let menuWindow = null;
 const proxyManager = new ProxyManager();
+const voisonaManager = new VoiSonaManager();
+const voisonaPrefs = { autoStart: true, autoHide: true, executable: '' };
 let credentialStore = null;
 let browserCredentialPortal = null;
 let credentials = null;
@@ -96,8 +99,31 @@ async function voiceSettingsStatus() {
       ...proxyManager.status(),
       running: await proxyManager.isAvailable()
     },
+    voisona: voisonaManager.status(),
     error: credentialsError
   };
+}
+
+async function startIntegratedVoice() {
+  try {
+    if (voisonaPrefs.autoStart) await voisonaManager.ensureRunning(voisonaPrefs.executable);
+    else await voisonaManager.refresh();
+  } catch (error) {
+    console.warn('[CORE Voice] VoiSona auto-launch failed:', error?.message);
+  }
+  await startProxyAndRefresh();
+  if (!voisonaPrefs.autoHide || !voisonaManager.status().managed || !credentials) return;
+  // The editor may take a few seconds to initialize its REST API.
+  // Leave the window visible when login or initial API configuration is needed.
+  for (let attempt = 0; attempt < 10; attempt++) {
+    if (voiceEntries.length && !voiceError) {
+      try { await voisonaManager.hide(); }
+      catch (error) { console.warn('[CORE Voice] auto-hide failed:', error?.message); }
+      return;
+    }
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    await refreshVoices();
+  }
 }
 
 function openVoiceSettings() {
@@ -243,6 +269,10 @@ function voiceDiagnostics() {
     'Proxy管理: ' + (proxyManager.status().managed
       ? 'このアプリが起動・管理' : '外部起動または停止中'),
     '自動起動エラー: ' + (proxyManager.status().error || 'なし'),
+    'VoiSona本体: ' + (voisonaManager.status().running
+      ? (voisonaManager.status().managed ? 'アロナから起動' : '既存プロセスを再利用')
+      : '停止中'),
+    'VoiSona管理エラー: ' + (voisonaManager.status().error || 'なし'),
     '認証情報: ' + (credentials ? 'Windowsで暗号化保存済み' : '未設定'),
     '前提: VoiSona Talk本体を起動しREST APIを有効にする',
     '接続設定は右クリック → 音声 → 接続設定・認証情報から変更できます。'
@@ -277,6 +307,9 @@ async function restoreModelSelection() {
   try {
     const settings = JSON.parse(await fs.readFile(settingsFile(), 'utf8'));
     if (typeof settings.voiceName === 'string') selectedVoiceName = settings.voiceName;
+    if (typeof settings.voisonaAutoStart === 'boolean') voisonaPrefs.autoStart = settings.voisonaAutoStart;
+    if (typeof settings.voisonaAutoHide === 'boolean') voisonaPrefs.autoHide = settings.voisonaAutoHide;
+    if (typeof settings.voisonaExecutable === 'string') voisonaPrefs.executable = settings.voisonaExecutable;
     if (typeof settings.modelPath !== 'string') return;
     if (!['.pmx', '.pmd'].includes(path.extname(settings.modelPath).toLowerCase())) return;
     const stats = await fs.stat(settings.modelPath);
@@ -289,7 +322,13 @@ async function restoreModelSelection() {
 async function saveModelSelection() {
   const filepath = settingsFile();
   await fs.mkdir(path.dirname(filepath), { recursive: true });
-  await fs.writeFile(filepath, JSON.stringify({ modelPath: currentModelFile, voiceName: selectedVoiceName }, null, 2), 'utf8');
+  await fs.writeFile(filepath, JSON.stringify({
+    modelPath: currentModelFile,
+    voiceName: selectedVoiceName,
+    voisonaAutoStart: voisonaPrefs.autoStart,
+    voisonaAutoHide: voisonaPrefs.autoHide,
+    voisonaExecutable: voisonaPrefs.executable
+  }, null, 2), 'utf8');
 }
 
 async function handleModelAsset(request) {
@@ -454,6 +493,12 @@ function menuState() {
     voiceStatus: voiceError || '接続済み',
     voiceReady: !voiceError && voiceEntries.length > 0,
     tokenReady: Boolean(speechBridge?.server),
+    voisona: {
+      ...voisonaManager.status(),
+      autoStart: voisonaPrefs.autoStart,
+      autoHide: voisonaPrefs.autoHide,
+      executableSet: !!voisonaPrefs.executable
+    },
     emotion: { selected: emotionState.selected, available: emotionState.available }
   };
 }
@@ -536,7 +581,44 @@ async function executeMenuAction(action, value) {
       return '接続設定を開きました';
     case 'voice.refresh':
       await startProxyAndRefresh();
+      await voisonaManager.refresh();
       return voiceError || '音声を更新しました';
+    case 'voice.appStart': {
+      const state = await voisonaManager.ensureRunning(voisonaPrefs.executable);
+      if (!state.running) throw new Error(state.error || 'VoiSona Talkを起動できませんでした');
+      await startProxyAndRefresh();
+      return 'VoiSona Talkを起動・検出しました';
+    }
+    case 'voice.appShow':
+      await voisonaManager.show();
+      return 'VoiSona Talkの画面を表示しました';
+    case 'voice.appHide':
+      await voisonaManager.hide({ manual: true });
+      return 'VoiSona Talkを非表示にしました';
+    case 'voice.autoStart':
+      voisonaPrefs.autoStart = !voisonaPrefs.autoStart;
+      await saveModelSelection();
+      return '自動起動: ' + (voisonaPrefs.autoStart ? 'ON' : 'OFF');
+    case 'voice.autoHide':
+      voisonaPrefs.autoHide = !voisonaPrefs.autoHide;
+      await saveModelSelection();
+      return '起動後の自動非表示: ' + (voisonaPrefs.autoHide ? 'ON' : 'OFF');
+    case 'voice.appPath': {
+      const chosen = await dialog.showOpenDialog(mainWindow, {
+        title: 'VoiSona Talk.exeを選択',
+        buttonLabel: '登録',
+        properties: ['openFile'],
+        filters: [{ name: 'VoiSona Talk', extensions: ['exe'] }]
+      });
+      if (chosen.canceled || !chosen.filePaths.length) return '選択をキャンセルしました';
+      const selected = chosen.filePaths[0];
+      if (path.win32.basename(selected).toLowerCase() !== 'voisona talk.exe') {
+        throw new Error('VoiSona Talk.exeを選択してください');
+      }
+      voisonaPrefs.executable = selected;
+      await saveModelSelection();
+      return 'VoiSona Talkの実行ファイルを登録しました';
+    }
     case 'voice.select':
       if (typeof value !== 'string' || value.length > 160 ||
           !voiceEntries.some(v => v.voice_name === value)) {
@@ -668,8 +750,9 @@ app.whenReady().then(async () => {
   ipcMain.on('avatar:menu', event => {
     if (isOurWindow(event) && currentModelFile) showAvatarMenu();
   });
-  ipcMain.handle('avatar-menu:state', event => {
+  ipcMain.handle('avatar-menu:state', async event => {
     if (!isMenuWindow(event)) throw new Error('Unauthorized menu request');
+    await voisonaManager.refresh();
     return menuState();
   });
   ipcMain.handle('avatar-menu:action', async (event, action, value) => {
@@ -829,14 +912,30 @@ app.whenReady().then(async () => {
     speechBridge = null;
     console.warn('[CORE speech bridge] unable to listen:', speechBridgeError);
   });
-  // Check/launch localhost Python proxy without delaying model rendering.
-  void startProxyAndRefresh();
+  // Start installed VoiSona Talk and its existing Python proxy without
+  // delaying MMD rendering. A configured API must be reachable before
+  // automatically hiding a newly launched editor window.
+  void startIntegratedVoice();
 }).catch(error => {
   console.error('Unable to initialize desktop avatar:', error);
   app.quit();
 });
 
-app.on('before-quit', () => {
+let voiceShutdownPending = false;
+let voiceShutdownComplete = false;
+app.on('before-quit', event => {
+  if (!voiceShutdownComplete) {
+    event.preventDefault();
+    if (voiceShutdownPending) return;
+    voiceShutdownPending = true;
+    void voisonaManager.shutdown().catch(error => {
+      console.warn('[CORE Voice] VoiSona shutdown failed:', error?.message);
+    }).finally(() => {
+      voiceShutdownComplete = true;
+      app.quit();
+    });
+    return;
+  }
   closeAvatarMenu();
   browserCredentialPortal?.close();
   speechBridge?.close();
