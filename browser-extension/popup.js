@@ -25,6 +25,76 @@ let selectedVoice = null;
 let voiceProfiles = {};
 let currentProfile = null;
 let saveTimer = null;
+let selectedTabIds = new Set();
+let selectionSave = Promise.resolve();
+const CHAT_TAB_PATTERNS = ['https://chatgpt.com/*', 'https://chat.openai.com/*'];
+const CHAT_TAB_HOSTS = new Set(['chatgpt.com', 'chat.openai.com']);
+function isChatTab(tab) {
+  try { return CHAT_TAB_HOSTS.has(new URL(tab?.url || '').hostname); }
+  catch { return false; }
+}
+function effectiveReadingMode(settings) {
+  return ['all', 'selected', 'off'].includes(settings.readingMode)
+    ? settings.readingMode
+    : (settings.enabled === true && settings.autoRead !== false ? 'all' : 'off');
+}
+function storeTabSelection() {
+  const ids = [...selectedTabIds];
+  selectionSave = selectionSave.catch(() => {}).then(() =>
+    chrome.storage.session.set({ selectedTabIds: ids }));
+  return selectionSave;
+}
+async function renderChatTabs() {
+  await selectionSave;
+  const [tabs, state] = await Promise.all([
+    chrome.tabs.query({ url: CHAT_TAB_PATTERNS }),
+    chrome.storage.session.get({ selectedTabIds: [] })
+  ]);
+  const existing = new Set(tabs.map(tab => tab.id));
+  const valid = Array.isArray(state.selectedTabIds) ? state.selectedTabIds
+    .filter(id => Number.isInteger(id) && existing.has(id)) : [];
+  if (valid.length !== (state.selectedTabIds?.length || 0)) {
+    selectedTabIds = new Set(valid);
+    await storeTabSelection();
+  } else selectedTabIds = new Set(valid);
+  const root = $('chatTabs');
+  root.replaceChildren();
+  if (!tabs.length) {
+    const note = document.createElement('p');
+    note.className = 'hint';
+    note.textContent = '開いているChatGPTタブがありません。';
+    root.append(note);
+    return;
+  }
+  tabs.sort((a, b) => (a.windowId - b.windowId) || (a.index - b.index));
+  for (const tab of tabs) {
+    const row = document.createElement('label');
+    row.className = 'tab-choice';
+    row.title = tab.title || tab.url || 'ChatGPT';
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.checked = selectedTabIds.has(tab.id);
+    input.setAttribute('aria-label', (tab.title || 'ChatGPT') + ' の読み上げ');
+    input.addEventListener('change', async () => {
+      if (input.checked) selectedTabIds.add(tab.id);
+      else selectedTabIds.delete(tab.id);
+      try { await storeTabSelection(); }
+      catch (error) { status('タブ設定の保存に失敗: ' + error.message); }
+    });
+    const title = document.createElement('span');
+    title.className = 'tab-title';
+    title.textContent = tab.title || 'ChatGPT';
+    row.append(input, title);
+    if (tab.active) {
+      const current = document.createElement('span');
+      current.className = 'tab-current';
+      current.textContent = '表示中';
+      row.append(current);
+    }
+    root.append(row);
+  }
+}
+
 
 function status(text) { $('status').textContent = String(text || ''); }
 function selectedKey() { return selectedVoice ? keyFor(selectedVoice) : ''; }
@@ -178,11 +248,17 @@ async function checkConnection(preferredVoice = null) {
 }
 async function init() {
   const settings = await chrome.storage.local.get({
-    token: '', enabled: false, autoRead: true,
+    token: '', enabled: false, autoRead: true, readingMode: null,
     voice: null, voiceProfiles: {}, status: ''
   });
   voiceProfiles = settings.voiceProfiles || {};
-  $('auto').checked = settings.enabled === true && settings.autoRead !== false;
+  const mode = effectiveReadingMode(settings);
+  $('readingMode').value = mode;
+  $('tabChooser').hidden = mode !== 'selected';
+  if (mode === 'selected') {
+    try { await renderChatTabs(); }
+    catch (error) { status('タブ一覧の取得に失敗: ' + error.message); }
+  }
   $('token').value = settings.token || '';
   status(settings.status || '');
   if (settings.token) await checkConnection(settings.voice);
@@ -199,11 +275,36 @@ $('saveToken').addEventListener('click', async () => {
   const previous = await chrome.storage.local.get('voice');
   await checkConnection(previous.voice);
 });
-$('auto').addEventListener('change', async event => {
-  await chrome.storage.local.set({
-    enabled: event.target.checked, autoRead: event.target.checked
-  });
-  status(event.target.checked ? '自動読み上げを有効にしました' : '自動読み上げを無効にしました');
+$('readingMode').addEventListener('change', async event => {
+  const mode = event.target.value;
+  if (!['all', 'selected', 'off'].includes(mode)) return;
+  $('tabChooser').hidden = mode !== 'selected';
+  try {
+    if (mode === 'selected') {
+      await renderChatTabs();
+      // When entering selected mode for the first time, the active
+      // ChatGPT tab is a sensible default; subsequent choices are preserved.
+      if (!selectedTabIds.size) {
+        const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (isChatTab(activeTab)) {
+          selectedTabIds.add(activeTab.id);
+          await storeTabSelection();
+          await renderChatTabs();
+        }
+      }
+    }
+    await chrome.storage.local.set({
+      readingMode: mode, enabled: mode !== 'off', autoRead: mode !== 'off'
+    });
+    status(mode === 'all' ? 'すべてのChatGPTタブで読み上げます'
+      : mode === 'off' ? '自動読み上げをすべて無効にしました'
+      : 'チェックしたタブだけ読み上げます');
+  } catch (error) {
+    status('読み上げ対象の切り替えに失敗: ' + error.message);
+  }
+});
+$('refreshTabs').addEventListener('click', () => {
+  void renderChatTabs().catch(error => status('タブ一覧の更新に失敗: ' + error.message));
 });
 $('voice').addEventListener('change', async event => {
   await flushSave();
@@ -263,7 +364,7 @@ $('loadStyles').addEventListener('click', async () => {
 
 async function activeChatTab() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab?.id || !tab.url?.startsWith('https://chatgpt.com/')) {
+  if (!Number.isInteger(tab?.id) || !isChatTab(tab)) {
     throw Error('ChatGPTの会話タブで実行してください');
   }
   return tab.id;
