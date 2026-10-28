@@ -301,3 +301,16 @@ Windowsでインストール済みのVoiSona Talk本体を、CORE-Arona-Desktop�
 **Windowsでの確認**: アプリを終了して `git pull` → `npm test` → `npm start`。アロナの「音声」パネルでVoiSona状態を確認し、起動・非表示・表示を試してください。VoiSonaのREST APIはあらかじめ編集 → 環境設定 → APIで有効化しておく必要があります。既存のVoiSonaを開いたままで起動しても自動的に隠れないことを確認してください。
 
 参考: VoiSona公式インストール手順 https://manual.voisona.com/ja/talk/pc/2b6e9bc7efb1805e9f9ac5be520d023a 、公式REST API手順 https://manual.voisona.com/ja/talk/pc/2b6e9bc7efb180ea86ccc6c7347e9ca6 。
+
+
+### 2026-10-28: VoiSona内部ウィンドウ誤表示を修正
+
+初期実装では、VoiSonaのプロセスに属するタイトル付きトップレベルウィンドウを一括で表示・非表示していたため、JUCEの音声処理用ウィンドウ（\`JUCEWindow\`、\`Windows Audio\`、\`DirectSound\`、\`JuceMidiDeviceDetector\` など）が誤って表示される可能性がありました。
+
+- Windowsヘルパーが列挙したウィンドウのタイトル・サイズ・種類を検査し、**一意に特定できたVoiSonaのメイン画面のHWNDだけ**をWin32で操作します。
+- 補助ウィンドウは操作対象から除外し、メイン画面を一意に特定できない場合は**表示・非表示・終了を実行しません**。音声合成や3D表示は継続します。
+- アロナ右クリック → 音声で「メイン画面未検出（操作を保留）」と表示される場合は、VoiSonaの画面構成に合う識別条件を実機確認する必要があります。
+- すでに内部ウィンドウが表示されている場合は、VoiSona Talkを通常の方法で終了してからアロナを更新・再起動してください。変更はElectron側のみなのでChrome拡張の再読み込みは不要です。
+- 追加テスト: ヘルパーが複数存在してもメイン画面以外のHWNDへ表示・非表示を送らないこと、曖昧なウィンドウ構成で操作を中止すること。
+
+注: Windows実機でのWin32/PowerShell操作はCI（Linux）では再現できず、実機確認が必要です。
