@@ -40,6 +40,17 @@
     <section class="page" data-page="voice" hidden>
       <div class="section-title"><span>03 / VOICE</span><small>VoiSona Talk</small></div>
       <div class="connection"><i id="voice-light"></i><span id="voice-status">接続を確認中...</span></div>
+      <div class="section-title gap"><span>VOICE ENGINE</span><small>本体の起動・非表示</small></div>
+      <div class="connection"><i id="voisona-light"></i><span id="voisona-status">VoiSona Talkを確認中...</span></div>
+      <div class="voice-manager-grid">
+        <button type="button" class="row" data-action="voice.autoStart" id="voisona-autostart">自動起動 ON</button>
+        <button type="button" class="row" data-action="voice.autoHide" id="voisona-autohide">自動非表示 ON</button>
+        <button type="button" class="row" data-action="voice.appStart">本体を起動</button>
+        <button type="button" class="row" data-action="voice.appShow" id="voisona-show">画面を表示</button>
+        <button type="button" class="row" data-action="voice.appHide" id="voisona-hide">画面を隠す</button>
+        <button type="button" class="row" data-action="voice.appPath">実行ファイル指定</button>
+      </div>
+      <div class="section-title gap"><span>VOICE CONNECTION</span><small>音声設定</small></div>
       <div class="stack">
         <button type="button" class="row primary" data-action="voice.settings"><span>⚙</span>接続設定・認証情報<b>›</b></button>
         <button type="button" class="row" data-action="voice.refresh"><span>↻</span>Proxyを起動・音声一覧を更新</button>
