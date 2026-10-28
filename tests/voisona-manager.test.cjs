@@ -6,22 +6,38 @@ const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 const { EventEmitter } = require('node:events');
-const { VoiSonaManager, validExecutable, findExecutable } = require('../electron/voisona-manager.cjs');
+const {
+  VoiSonaManager, validExecutable, findExecutable, selectMainWindow
+} = require('../electron/voisona-manager.cjs');
+
+function mainWindow(pid, visible = true) {
+  return {
+    handle: String(pid * 10 + 1), title: 'VoiSona Talk',
+    width: 1080, height: 720, toolWindow: false, visible
+  };
+}
 
 function makeWindows({ initial = [], launchedPid = 3456 } = {}) {
-  const processes = initial.map(p => ({ ...p }));
+  const processes = initial.map(p => ({
+    ...p,
+    windows: p.windows || (p.hasWindow === false ? [] : [mainWindow(p.pid, p.visible)])
+  }));
   const operations = [];
   const launches = [];
-  const run = async (action, pid = 0) => {
-    operations.push({ action, pid });
+  const run = async (action, pid = 0, handle = '') => {
+    operations.push({ action, pid, handle });
     if (action === 'list') {
-      return { processes: processes.map(p => ({ ...p })) };
+      return { processes: processes.map(p => ({
+        pid: p.pid, windows: p.windows.map(w => ({ ...w }))
+      })) };
     }
     const proc = processes.find(p => p.pid === pid);
-    if (!proc || !proc.hasWindow) throw new Error('Window missing');
-    if (action === 'hide') proc.visible = false;
-    if (action === 'show') proc.visible = true;
+    const target = proc?.windows.find(w => w.handle === handle);
+    if (!target) throw new Error('Window missing or wrong HWND');
+    if (action === 'hide') target.visible = false;
+    if (action === 'show') target.visible = true;
     if (action === 'close') processes.splice(processes.indexOf(proc), 1);
+    if (action !== 'close') proc.visible = target.visible;
     return { ok: true };
   };
   const launch = (exe, args, options) => {
@@ -29,7 +45,10 @@ function makeWindows({ initial = [], launchedPid = 3456 } = {}) {
     const child = Object.assign(new EventEmitter(), {
       pid: launchedPid, exitCode: null
     });
-    processes.push({ pid: launchedPid, visible: true, hasWindow: true });
+    processes.push({
+      pid: launchedPid, visible: true, hasWindow: true,
+      windows: [mainWindow(launchedPid)]
+    });
     process.nextTick(() => child.emit('spawn'));
     return child;
   };
@@ -40,6 +59,61 @@ function makeWindows({ initial = [], launchedPid = 3456 } = {}) {
   });
   return { manager, processes, launches, operations };
 }
+
+test('main-window selection rejects JUCE and audio helper windows', () => {
+  const list = [
+    { handle: '61', title: 'JUCEWindow', width: 1500, height: 900, visible: true, toolWindow: false },
+    { handle: '62', title: 'Windows Audio', width: 1200, height: 700, visible: true, toolWindow: false },
+    { handle: '63', title: 'DirectSound', width: 900, height: 800, visible: true, toolWindow: false },
+    { handle: '64', title: 'JuceMidiDeviceDetector', width: 800, height: 600, visible: true, toolWindow: false },
+    { handle: '65', title: 'VoiSona Talk', width: 1200, height: 680, visible: false, toolWindow: false }
+  ];
+  assert.equal(selectMainWindow(list)?.handle, '65');
+  assert.equal(selectMainWindow(list.slice(0, 4)), null);
+  assert.equal(selectMainWindow([
+    { handle: '7', title: 'Other Tool', width: 700, height: 500, toolWindow: true }
+  ]), null);
+  assert.equal(selectMainWindow([
+    { handle: '8', title: 'Project A', width: 900, height: 700 },
+    { handle: '9', title: 'Project B', width: 1100, height: 800 }
+  ]), null, 'ambiguous windows must fail closed');
+});
+
+test('show, hide and close only the main HWND, preserving visible JUCE helpers', async () => {
+  const windows = [
+    { handle: '1001', title: 'JUCEWindow', width: 1200, height: 750, visible: true },
+    { handle: '1002', title: 'Windows Audio', width: 1200, height: 800, visible: true },
+    { handle: '1003', title: 'DirectSound', width: 800, height: 700, visible: true },
+    { handle: '1004', title: 'JuceMidiDeviceDetector', width: 1500, height: 750, visible: true },
+    { handle: '1005', title: 'VoiSona Talk', width: 1000, height: 650, visible: true }
+  ];
+  const { manager, processes, operations } = makeWindows({
+    initial: [{ pid: 221, windows, visible: true }]
+  });
+  await manager.hide({ manual: true });
+  assert.equal(processes[0].windows.at(-1).visible, false);
+  assert.ok(processes[0].windows.slice(0, 4).every(w => w.visible));
+  await manager.show();
+  assert.equal(processes[0].windows.at(-1).visible, true);
+  assert.ok(operations.filter(o => ['hide', 'show'].includes(o.action))
+    .every(o => o.handle === '1005'));
+});
+
+test('ambiguous or helper-only windows cannot be shown, hidden or closed', async () => {
+  const { manager, operations } = makeWindows({
+    initial: [{ pid: 221, windows: [
+      { handle: '1001', title: 'JUCEWindow', width: 1000, height: 750, visible: true },
+      { handle: '1002', title: 'Windows Audio', width: 1000, height: 750, visible: true }
+    ] }]
+  });
+  const state = await manager.refresh();
+  assert.equal(state.running, true);
+  assert.equal(state.hasWindow, false);
+  await assert.rejects(manager.hide({ manual: true }), /検出できません/);
+  await assert.rejects(manager.show(), /検出できません/);
+  await manager.shutdown();
+  assert.equal(operations.some(o => ['hide', 'show', 'close'].includes(o.action)), false);
+});
 
 test('finds installed VoiSona Talk.exe in the official Techno-Speech directory', async t => {
   const temp = await fs.mkdtemp(path.join(os.tmpdir(), 'arona-voisona-'));
