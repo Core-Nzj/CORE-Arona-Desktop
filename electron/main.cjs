@@ -16,6 +16,10 @@ const { BrowserCredentialPortal } = require('./browser-credentials.cjs');
 const { SpeechBridge } = require('./speech-bridge.cjs');
 const { readSpeechText, copySpeechToken } = require('./clipboard-actions.cjs');
 const { voiceKey, globalParameters } = require('./speech-settings.cjs');
+const {
+  DEFAULT_WIDTH, DEFAULT_HEIGHT, EDGES,
+  normalizeMenuLayout, changeMenuZoom, resizeMenuBounds
+} = require('./menu-layout.cjs');
 
 // Desktop speech may start from a native context-menu action.
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
@@ -49,6 +53,9 @@ let mainWindow;
 let avatarScale = INITIAL_SCALE;
 let settingsWindow = null;
 let menuWindow = null;
+let menuLayout = { width: DEFAULT_WIDTH, height: DEFAULT_HEIGHT, zoom: 1 };
+let menuResize = null;
+let menuLayoutSave = Promise.resolve();
 const proxyManager = new ProxyManager();
 const voisonaManager = new VoiSonaManager();
 const voisonaPrefs = { autoStart: true, autoHide: true, executable: '' };
@@ -487,6 +494,71 @@ async function reportClipboardError(error) {
   }
 }
 
+// Store menu preferences separately from model and VoiSona settings to avoid
+// overwriting them when the popup is resized or its text zoom is changed.
+function menuLayoutFile() {
+  return path.join(app.getPath('userData'), 'frame-panel-layout.json');
+}
+
+async function restoreMenuLayout() {
+  try {
+    const value = JSON.parse(await fs.readFile(menuLayoutFile(), 'utf8'));
+    menuLayout = normalizeMenuLayout(value, screen.getPrimaryDisplay().workArea);
+  } catch {
+    // Missing or invalid local preferences: use defaults.
+  }
+}
+
+function saveMenuLayout() {
+  const snapshot = JSON.stringify(menuLayout, null, 2);
+  menuLayoutSave = menuLayoutSave.catch(() => {}).then(async () => {
+    const destination = menuLayoutFile();
+    await fs.mkdir(path.dirname(destination), { recursive: true });
+    await fs.writeFile(destination, snapshot, 'utf8');
+  });
+  void menuLayoutSave.catch(error => console.warn('[FRAME UI] layout not saved:', error?.message));
+}
+
+function finishMenuResize() {
+  if (!menuResize) return;
+  const popup = menuResize.window;
+  menuResize = null;
+  if (!popup.isDestroyed()) {
+    const { width, height } = popup.getBounds();
+    menuLayout.width = width;
+    menuLayout.height = height;
+    saveMenuLayout();
+  }
+}
+
+function beginMenuResize(edge) {
+  if (!menuWindow || menuWindow.isDestroyed() || !EDGES.has(edge)) return;
+  finishMenuResize();
+  const pointer = screen.getCursorScreenPoint();
+  menuResize = {
+    window: menuWindow,
+    edge,
+    pointer,
+    bounds: menuWindow.getBounds(),
+    area: screen.getDisplayNearestPoint(pointer).workArea
+  };
+}
+
+function moveMenuResize() {
+  const state = menuResize;
+  if (!state || state.window !== menuWindow || state.window.isDestroyed()) return;
+  const target = resizeMenuBounds(
+    state.bounds, state.pointer, screen.getCursorScreenPoint(), state.edge, state.area
+  );
+  const current = state.window.getBounds();
+  if (current.x !== target.x || current.y !== target.y ||
+      current.width !== target.width || current.height !== target.height) {
+    // Programmatic resize keeps the transparent window's rounded corners.
+    // Native OS edge resizing is unsupported for transparent Electron windows.
+    state.window.setBounds(target, false);
+  }
+}
+
 // A separate popup keeps the avatar's native click-through silhouette intact.
 function menuState() {
   return {
@@ -510,6 +582,7 @@ function menuState() {
 
 function closeAvatarMenu() {
   const popup = menuWindow;
+  finishMenuResize();
   menuWindow = null;
   if (popup && !popup.isDestroyed()) popup.close();
 }
@@ -520,13 +593,13 @@ function showAvatarMenu() {
   stopAvatarDrag();
   const pointer = screen.getCursorScreenPoint();
   const area = screen.getDisplayNearestPoint(pointer).workArea;
-  const width = Math.min(376, Math.max(280, area.width - 12));
-  const height = Math.min(566, Math.max(320, area.height - 12));
+  const layout = normalizeMenuLayout(menuLayout, area);
+  const { width, height } = layout;
   const x = Math.max(area.x, Math.min(pointer.x + 12, area.x + area.width - width));
   const y = Math.max(area.y, Math.min(pointer.y + 10, area.y + area.height - height));
   const popup = new BrowserWindow({
     parent: mainWindow,
-    title: 'CORE Arona / Control Panel',
+    title: 'FRAME / Settings',
     x, y, width, height,
     frame: false,
     transparent: true,
@@ -549,15 +622,21 @@ function showAvatarMenu() {
   popup.setMenuBarVisibility(false);
   popup.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   popup.webContents.on('will-navigate', event => event.preventDefault());
+  popup.webContents.on('did-finish-load', () => {
+    if (!popup.isDestroyed() && menuWindow === popup) {
+      popup.webContents.setZoomFactor(menuLayout.zoom);
+    }
+  });
   popup.once('ready-to-show', () => {
     if (menuWindow !== popup || popup.isDestroyed()) return;
     popup.show();
     popup.focus();
   });
   popup.on('blur', () => {
-    if (menuWindow === popup) closeAvatarMenu();
+    if (menuWindow === popup && !menuResize) closeAvatarMenu();
   });
   popup.on('closed', () => {
+    if (menuResize?.window === popup) menuResize = null;
     if (menuWindow === popup) menuWindow = null;
   });
   popup.loadFile(path.join(__dirname, 'avatar-menu.html')).catch(error => {
@@ -745,6 +824,7 @@ function createWindow() {
 
 app.whenReady().then(async () => {
   await restoreModelSelection();
+  await restoreMenuLayout();
   protocol.handle(SCHEME, handleModelAsset);
 
   ipcMain.handle('avatar:current', () => infoForCurrentModel());
@@ -769,6 +849,24 @@ app.whenReady().then(async () => {
       console.error('[CORE menu] action failed:', action, error);
       return { ok: false, message: String(error?.message ?? error).slice(0, 240) };
     }
+  });
+  ipcMain.on('avatar-menu:resize-start', (event, edge) => {
+    if (isMenuWindow(event)) beginMenuResize(edge);
+  });
+  ipcMain.on('avatar-menu:resize-move', event => {
+    if (isMenuWindow(event)) moveMenuResize();
+  });
+  ipcMain.on('avatar-menu:resize-end', event => {
+    if (isMenuWindow(event)) {
+      moveMenuResize();
+      finishMenuResize();
+    }
+  });
+  ipcMain.on('avatar-menu:zoom', (event, direction) => {
+    if (!isMenuWindow(event) || !['in', 'out', 'reset'].includes(direction)) return;
+    menuLayout.zoom = changeMenuZoom(menuLayout.zoom, direction);
+    menuWindow.webContents.setZoomFactor(menuLayout.zoom);
+    saveMenuLayout();
   });
   ipcMain.on('avatar-menu:close', event => {
     if (isMenuWindow(event)) closeAvatarMenu();
