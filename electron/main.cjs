@@ -144,7 +144,7 @@ function openVoiceSettings() {
     height: 565,
     resizable: false,
     autoHideMenuBar: true,
-    backgroundColor: '#f6f8fb',
+    backgroundColor: '#1d1d1f',
     webPreferences: {
       preload: path.join(__dirname, 'voice-settings-preload.cjs'),
       contextIsolation: true,
