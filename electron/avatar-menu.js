@@ -108,5 +108,5 @@ document.addEventListener('keydown', event => {
 });
 window.aronaMenu.state().then(state => {
   renderState(state);
-  message('CORE ARONA DESKTOP / READY');
+  message('FRAME / READY');
 }).catch(error => message('メニューを初期化できません: ' + String(error?.message ?? error), true));
