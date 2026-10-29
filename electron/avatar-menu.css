@@ -1,6 +1,6 @@
 /* FRAME / Apple-inspired dark desktop controls.
    Design tokens: DESIGN.md, tokens.json, variables.css (Project sources).
-   Traffic-light circles: only the red close control is actionable. */
+   Windows window controls, including the close button, sit on the right. */
 :root {
   color-scheme: dark;
   font-family: "SF Pro Text", Inter, "Segoe UI", "Yu Gothic UI", sans-serif;
@@ -45,35 +45,35 @@ button:focus-visible { outline: 2px solid #2997ff; outline-offset: 2px; }
   app-region: drag;
   -webkit-app-region: drag;
 }
-.window-controls { display: flex; gap: 8px; align-items: center; app-region: no-drag; -webkit-app-region: no-drag; }
-.traffic-light {
-  display: grid;
-  place-items: center;
-  width: 12px;
-  height: 12px;
-  flex: none;
-  border-radius: 50%;
-  padding: 0;
-  border: 1px solid rgba(0,0,0,.17);
-  line-height: 1;
-}
-.traffic-close { background: #ff5f57; color: #6b1c18; cursor: pointer; }
-.traffic-close span { opacity: 0; font-size: 10px; line-height: 1; font-weight: 700; }
-.traffic-close:hover { background: #ff756e; }
-.traffic-close:hover span, .traffic-close:focus-visible span { opacity: 1; }
-.traffic-close:active { background: #e64840; }
-.traffic-minimize { background: #febc2e; opacity: .58; pointer-events: none; }
-.traffic-expand { background: #28c840; opacity: .58; pointer-events: none; }
 .titlebar-name {
-  position: absolute;
-  left: 50%;
-  transform: translateX(-50%);
-  pointer-events: none;
   color: #b7b7bb;
   font-size: 11px;
   font-weight: 600;
   letter-spacing: .055em;
+  pointer-events: none;
 }
+.titlebar-close {
+  display: grid;
+  place-items: center;
+  margin: 0 -15px 0 auto;
+  width: 46px;
+  height: 37px;
+  padding: 0;
+  flex: none;
+  border: 0;
+  border-radius: 0 17px 0 0;
+  background: transparent;
+  color: #c7c7cb;
+  cursor: pointer;
+  font-size: 20px;
+  font-weight: 400;
+  line-height: 1;
+  app-region: no-drag;
+  -webkit-app-region: no-drag;
+  transition: background-color .13s, color .13s;
+}
+.titlebar-close:hover { background: #f5d9df; color: #ae3047; }
+.titlebar-close:active { background: #ecc3cd; color: #972b40; }
 .heading { flex: none; padding: 16px 20px 15px; }
 .eyebrow { color: #86868b; font-size: 9px; font-weight: 600; letter-spacing: .11em; }
 h1 { margin: 5px 0 3px; color: #f5f5f7; font-size: 23px; font-weight: 650; line-height: 1.2; letter-spacing: -.02em; }
@@ -228,4 +228,32 @@ footer { display: flex; align-items: center; gap: 8px; flex: none; min-height: 3
 footer .pulse { flex: none; width: 6px; height: 6px; border-radius: 50%; background: #30c76a; }
 #feedback { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #feedback.error { color: #ff7777; }
+
+/* Transparent windows do not expose a reliable native resize border.
+   These small hit targets send pointer deltas to the Electron main process. */
+.resize-zone {
+  position: fixed;
+  display: block;
+  z-index: 100;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  app-region: no-drag;
+  -webkit-app-region: no-drag;
+}
+.resize-n, .resize-s { left: 13px; right: 13px; height: 8px; cursor: ns-resize; }
+.resize-n { top: 0; }
+.resize-s { bottom: 0; }
+.resize-e, .resize-w { top: 13px; bottom: 13px; width: 8px; cursor: ew-resize; }
+.resize-e { right: 0; }
+.resize-w { left: 0; }
+.resize-ne, .resize-nw, .resize-se, .resize-sw {
+  width: 15px;
+  height: 15px;
+  z-index: 101;
+}
+.resize-ne { top: 0; right: 0; cursor: nesw-resize; }
+.resize-nw { top: 0; left: 0; cursor: nwse-resize; }
+.resize-se { bottom: 0; right: 0; cursor: nwse-resize; }
+.resize-sw { bottom: 0; left: 0; cursor: nesw-resize; }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; } }
