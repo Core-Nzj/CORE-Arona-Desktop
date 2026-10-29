@@ -72,6 +72,48 @@ function renderState(state) {
     makeOption(label,id,state.emotion?.selected === id,
       state.emotion?.available?.[id] === true,'emotion.select')));
 }
+// The window is transparent and frameless: manually capture edge drags.
+let resizing = null;
+let resizeFrame = null;
+
+function endResize() {
+  if (!resizing) return;
+  const { zone, pointerId } = resizing;
+  resizing = null;
+  if (resizeFrame !== null) {
+    cancelAnimationFrame(resizeFrame);
+    resizeFrame = null;
+  }
+  // Deliver the final cursor position before persisting the window dimensions.
+  window.aronaMenu.resizeEnd();
+  if (zone.hasPointerCapture(pointerId)) zone.releasePointerCapture(pointerId);
+}
+
+for (const zone of document.querySelectorAll('[data-resize-edge]')) {
+  zone.addEventListener('pointerdown', event => {
+    if (event.button !== 0 || resizing) return;
+    event.preventDefault();
+    resizing = { zone, pointerId: event.pointerId };
+    zone.setPointerCapture(event.pointerId);
+    window.aronaMenu.resizeStart(zone.dataset.resizeEdge);
+  });
+  zone.addEventListener('pointermove', event => {
+    if (!resizing || resizing.zone !== zone || resizing.pointerId !== event.pointerId) return;
+    if ((event.buttons & 1) === 0) { endResize(); return; }
+    if (resizeFrame !== null) return;
+    resizeFrame = requestAnimationFrame(() => {
+      resizeFrame = null;
+      if (resizing?.zone === zone) window.aronaMenu.resizeMove();
+    });
+  });
+  for (const eventName of ['pointerup', 'pointercancel', 'lostpointercapture']) {
+    zone.addEventListener(eventName, event => {
+      if (resizing?.zone === zone && resizing.pointerId === event.pointerId) endResize();
+    });
+  }
+}
+window.addEventListener('blur', endResize);
+
 const keepOpen = new Set([
   'voice.refresh', 'voice.select', 'emotion.select',
   'voice.autoStart', 'voice.autoHide', 'voice.appHide'
@@ -104,7 +146,18 @@ document.addEventListener('click', event => {
 });
 document.getElementById('close').addEventListener('click', () => window.aronaMenu.close());
 document.addEventListener('keydown', event => {
-  if (event.key === 'Escape') window.aronaMenu.close();
+  if (event.key === 'Escape') {
+    if (resizing) endResize();
+    window.aronaMenu.close();
+    return;
+  }
+  if (!event.ctrlKey || event.altKey || event.metaKey) return;
+  const plus = ['+', '='].includes(event.key) || ['Equal', 'NumpadAdd'].includes(event.code);
+  const minus = ['-', '_'].includes(event.key) || ['Minus', 'NumpadSubtract'].includes(event.code);
+  const reset = event.key === '0' || event.code === 'Numpad0';
+  if (!plus && !minus && !reset) return;
+  event.preventDefault();
+  window.aronaMenu.zoom(reset ? 'reset' : plus ? 'in' : 'out');
 });
 window.aronaMenu.state().then(state => {
   renderState(state);
