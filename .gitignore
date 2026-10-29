@@ -16,3 +16,6 @@ assets/private/
 *.bpmx
 *.spa
 *.sph
+# VoiSona generated audio and cache
+voisona_talk_cache/
+*.wav
