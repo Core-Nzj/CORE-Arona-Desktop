@@ -6,20 +6,53 @@
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'none'; connect-src 'none'; base-uri 'none'; form-action 'none'">
 <title>VoiSona Talk 設定</title>
 <style>
-:root { font-family: "Yu Gothic UI", "Meiryo", sans-serif; color-scheme: light; background:#f6f8fb; color:#1a2733; font-size:14px; }
-body { margin:0; padding:24px; }
-h1 { margin:0 0 9px; font-size:19px; font-weight:650; }
-p { margin:0 0 15px; line-height:1.7; color:#495b6b; }
-label { display:block; font-weight:600; margin:12px 0 6px; }
-input { box-sizing:border-box; padding:10px 12px; border-radius:7px; border:1px solid #b7c7d2; background:white; width:100%; font-size:14px; }
-input:focus { border-color:#00aab9; outline:2px solid #bceff3; }
-button { padding:9px 13px; border:1px solid #a7bbc9; border-radius:7px; background:white; cursor:pointer; font-size:13px; }
-button.primary { background:#008c9b; color:white; border-color:#008c9b; }
-button.danger { color:#8d3131; border-color:#d8a6a6; }
-button:disabled { opacity:.5; cursor:progress; }
-.actions { display:flex; gap:9px; flex-wrap:wrap; margin:20px 0 13px; }
-#status { padding:10px 12px; border-radius:7px; background:#e7f1f5; min-height:18px; white-space:pre-wrap; font-size:12px; line-height:1.5; overflow-wrap:anywhere; }
-.note { color:#5d6d79; font-size:12px; margin-top:10px; }
+:root {
+  color-scheme: dark;
+  font-family: "SF Pro Text", Inter, "Segoe UI", "Yu Gothic UI", sans-serif;
+  font-size: 13px;
+  color: #f5f5f7;
+  background: #1d1d1f;
+  -webkit-font-smoothing: antialiased;
+}
+* { box-sizing: border-box; }
+body { margin: 0; padding: 23px 25px 26px; min-height: 100vh; }
+h1 { margin: 0 0 8px; font-size: 21px; font-weight: 650; letter-spacing: -.025em; }
+p { margin: 0 0 15px; line-height: 1.62; color: #a1a1a6; font-size: 12px; }
+p strong { color: #f5f5f7; font-weight: 600; }
+label { display: block; margin: 15px 0 7px; font-size: 12px; font-weight: 600; color: #d2d2d7; }
+input {
+  display: block; width: 100%; padding: 10px 12px;
+  border: 1px solid #55555a; border-radius: 10px;
+  background: #29292c; color: #f5f5f7;
+  font: inherit; outline: none;
+}
+input::placeholder { color: #86868b; }
+input:hover { border-color: #74747a; }
+input:focus-visible { border-color: #2997ff; box-shadow: 0 0 0 2px rgba(41,151,255,.2); }
+button {
+  padding: 8px 12px; min-height: 34px;
+  border: 1px solid rgba(255,255,255,.14); border-radius: 10px;
+  background: #333336; color: #f5f5f7;
+  cursor: pointer; font: inherit; font-size: 12px; font-weight: 500;
+  transition: background-color .12s, border-color .12s;
+}
+button:hover:not(:disabled) { background: #46464b; border-color: rgba(255,255,255,.25); }
+button:focus-visible { outline: 2px solid #2997ff; outline-offset: 2px; }
+button.primary { background: #0071e3; color: #fff; border-color: #0071e3; border-radius: 999px; }
+button.primary:hover:not(:disabled) { background: #1684f6; border-color: #1684f6; }
+button.danger { color: #ff7777; border-color: rgba(255,89,90,.25); background: rgba(255,89,90,.08); }
+button.danger:hover:not(:disabled) { background: rgba(255,89,90,.17); }
+button:disabled { opacity: .45; cursor: not-allowed; }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 19px 0 15px; }
+#status {
+  min-height: 40px; padding: 10px 12px; border-radius: 10px;
+  background: #29292c; border: 1px solid rgba(255,255,255,.095);
+  color: #d2d2d7; white-space: pre-wrap; line-height: 1.5;
+  font-size: 11px; overflow-wrap: anywhere;
+}
+.note { margin: 12px 0 0; color: #86868b; font-size: 11px; line-height: 1.58; }
+code { color: #d2d2d7; }
+@media (prefers-reduced-motion: reduce) { button { transition: none; } }
 </style>
 </head>
 <body>
