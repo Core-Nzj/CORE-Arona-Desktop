@@ -235,6 +235,8 @@ footer .pulse { flex: none; width: 6px; height: 6px; border-radius: 50%; backgro
   position: fixed;
   display: block;
   z-index: 100;
+  /* Near-invisible paint keeps the hit area tangible in layered windows. */
+  background: rgba(29,29,31,.012);
   touch-action: none;
   user-select: none;
   -webkit-user-select: none;
