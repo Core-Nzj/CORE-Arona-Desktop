@@ -1,7 +1,10 @@
+/* FRAME / minimal macOS-inspired initial state. */
 :root {
   color-scheme: dark;
-  font-family: "Segoe UI", "Yu Gothic UI", sans-serif;
+  font-family: "SF Pro Text", Inter, "Segoe UI", "Yu Gothic UI", sans-serif;
   font-size: 12px;
+  color: #f5f5f7;
+  -webkit-font-smoothing: antialiased;
 }
 * { box-sizing: border-box; }
 html, body, #app {
@@ -12,33 +15,39 @@ html, body, #app {
 #avatar-canvas {
   position: absolute; inset: 0; width: 100%; height: 100%;
   display: block; outline: none;
-  cursor: default;
-  touch-action: none;
+  cursor: default; touch-action: none;
 }
 #placeholder {
   position: absolute;
   left: 8%; bottom: 40px; width: 84%;
-  text-align: center; line-height: 1.7;
-  background: rgba(16, 32, 48, .91);
-  padding: 22px 14px;
+  padding: 21px 14px;
+  border: 1px solid rgba(255,255,255,.19);
   border-radius: 20px;
-  border: 1px solid rgba(175, 227, 255, .28);
-  color: #fff;
+  background: rgba(29,29,31,.96);
+  box-shadow: 0 16px 40px rgba(0,0,0,.45);
+  color: #f5f5f7;
+  text-align: center; line-height: 1.65;
 }
 #placeholder[hidden] { display: none; }
-#placeholder p { margin: 8px 0 16px; font-size: 11px; color: #c3d7e4; }
+#placeholder p { margin: 7px 0 16px; font-size: 11px; color: #a1a1a6; }
 .initial {
   display: inline-grid; place-items: center;
-  width: 54px; height: 54px; margin-bottom: 12px;
-  background: #a3dbf9; border-radius: 50%;
-  color: #182c41; font-size: 30px; font-weight: bold;
+  width: 50px; height: 50px; margin-bottom: 11px;
+  background: #333336; border: 1px solid rgba(255,255,255,.11);
+  border-radius: 14px; color: #f5f5f7;
+  font-size: 26px; font-weight: 650;
 }
-#status { overflow-wrap: anywhere; }
-.placeholder-actions { display: flex; gap: 10px; justify-content: center; }
+#status { overflow-wrap: anywhere; font-weight: 550; }
+.placeholder-actions { display: flex; gap: 8px; justify-content: center; }
 button {
-  background: #d7efff; color: #142738; border: 0;
-  border-radius: 8px; padding: 8px 14px;
-  font: inherit; font-weight: 600; cursor: pointer;
+  min-height: 34px; padding: 8px 14px;
+  border: 1px solid rgba(255,255,255,.15);
+  border-radius: 999px; background: #333336;
+  color: #f5f5f7; font: inherit; font-weight: 550;
+  cursor: pointer;
 }
-button:hover { background: white; }
-button:disabled { opacity: .65; cursor: progress; }
+button:first-child { background: #0071e3; color: #fff; border-color: #0071e3; }
+button:hover:not(:disabled) { background: #49494e; }
+button:first-child:hover:not(:disabled) { background: #1684f6; }
+button:focus-visible { outline: 2px solid #2997ff; outline-offset: 2px; }
+button:disabled { opacity: .55; cursor: progress; }
