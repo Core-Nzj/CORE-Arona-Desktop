@@ -612,6 +612,8 @@ function showAvatarMenu() {
     hasShadow: true,
     webPreferences: {
       preload: path.join(__dirname, 'avatar-menu-preload.cjs'),
+      // Keep menu text zoom isolated from the MMD renderer and settings dialog.
+      partition: 'frame-panel-ui',
       contextIsolation: true,
       sandbox: true,
       nodeIntegration: false,
