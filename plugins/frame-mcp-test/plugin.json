@@ -1,0 +1,27 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "frame-mcp-test",
+  "version": "0.1.0",
+  "description": "FRAME Issue #4: a local read-only MCP connection smoke test for ChatGPT Desktop.",
+  "repository": "https://github.com/Core-Nzj/CORE-Arona-Desktop",
+  "keywords": [
+    "frame",
+    "mcp",
+    "local",
+    "test"
+  ],
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "FRAME MCP Test",
+        "shortDescription": "Test whether ChatGPT can reach a local FRAME MCP tool.",
+        "longDescription": "Development-only smoke test. Calls a local read-only ping tool. Does not control the PC or capture screenshots.",
+        "developerName": "CORE",
+        "category": "Productivity",
+        "capabilities": [
+          "Read"
+        ]
+      }
+    }
+  }
+}
