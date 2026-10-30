@@ -11,8 +11,9 @@ This experimental plugin is not FRAME itself. It exposes one read-only MCP tool 
 ## Installation / verification
 
 1. Fetch and check out the `feat/issue-4-mcp-smoke-test` Git branch.
-2. In Windows PowerShell, execute `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install-frame-mcp-test.ps1` from the repository root. This copies the test plugin into your personal local marketplace and preserves other plugin entries (the previous marketplace file is backed up).\n3. Restart the ChatGPT Windows desktop application.
-4. Open Plugins and look for the local source named **FRAME Development** from `.agents/plugins/marketplace.json`. You may need to configure the repository as a local marketplace first. If Chat mode does not expose a local source, document this as a compatibility limitation.
+2. In Windows PowerShell, execute `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install-frame-mcp-test.ps1` from the repository root. This copies the test plugin into your personal local marketplace and preserves other plugin entries (the previous marketplace file is backed up).
+3. Restart the ChatGPT Windows desktop application.
+4. Open Plugins and look for **FRAME MCP Test** in your personal source (often named **FRAME Local Plugins**). You may need to configure the repository as a local marketplace first. If Chat mode does not expose a local source, document this as a compatibility limitation.
 5. Install **FRAME MCP Test**. It starts an independent STDIO process using the bundled `server/index.mjs`. It does *not* reuse the earlier manually registered `frame_test` sample server.
 6. Start a **new ordinary Chat**, explicitly not Work or Codex. Mention `@FRAME MCP Test` or request the `ping` tool.
 7. Success means the actual tool returned `FRAME_PONG (local Node.js, win32)`. Mere listing/installation is not proof of Chat support.
