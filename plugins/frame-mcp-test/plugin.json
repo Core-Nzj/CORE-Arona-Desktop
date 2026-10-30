@@ -14,7 +14,7 @@
     "com.openai": {
       "interface": {
         "displayName": "FRAME MCP Test",
-        "shortDescription": "Test whether ChatGPT can reach a local FRAME MCP tool.",
+        "shortDescription": "Local MCP ping smoke test",
         "longDescription": "Development-only smoke test. Calls a local read-only ping tool. Does not control the PC or capture screenshots.",
         "developerName": "CORE",
         "category": "Productivity",

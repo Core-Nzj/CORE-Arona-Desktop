@@ -33,11 +33,21 @@ function reply(id, result, modern) {
 }
 function handle(request) {
   if (!request || request.jsonrpc !== '2.0' || typeof request.method !== 'string') {
-    if (request?.id !== undefined) fail(request.id, -32600, 'Invalid Request');
+    fail(null, -32600, 'Invalid Request');
     return;
   }
   if (request.id === undefined) return; // Notification; no response.
   const id = request.id;
+  if (typeof id !== 'string' && !(typeof id === 'number' && Number.isFinite(id))) {
+    fail(null, -32600, 'Invalid request ID');
+    return;
+  }
+  if (request.params !== undefined && (
+    request.params === null || typeof request.params !== 'object' || Array.isArray(request.params)
+  )) {
+    fail(id, -32602, 'Expected an object for params');
+    return;
+  }
   const requested = request.params?._meta?.['io.modelcontextprotocol/protocolVersion'];
   const modern = requested === MODERN_VERSION;
 
@@ -58,7 +68,7 @@ function handle(request) {
   }
   if (request.method === 'initialize') {
     const offered = request.params?.protocolVersion;
-    const negotiated = typeof offered === 'string' && offered <= LEGACY_VERSION
+    const negotiated = ['2024-11-05', '2025-03-26', '2025-06-18', LEGACY_VERSION].includes(offered)
       ? offered : LEGACY_VERSION;
     legacyInitialized = true;
     reply(id, {
