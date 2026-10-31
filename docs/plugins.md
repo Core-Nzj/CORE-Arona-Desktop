@@ -62,6 +62,8 @@ Windows PowerShellが必要です。Windows以外の環境ではプラグイン�
 
 ## 次の開発段階
 
+接続設計は [ADR-0003: 視覚接続アダプターと一時画像セッション](adr/0003-frame-vision-connection-adapter.md) に確定しました。現時点では設計のみで、撮影画像のChatGPT送信や送信許可UIは未実装です。画像ファイルの保存機能は追加しません。
+
 - 実際のWindows端末で表示の可用性と負荷を確認。
 - `capture_window` のローカルプレビューは試作済み。実機による撮影品質・例外処理の検証が必要。
 - `capture_display`、`capture_camera`、ChatGPT連携は今後の別課題。
