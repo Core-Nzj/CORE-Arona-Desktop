@@ -38,13 +38,21 @@ function frameVerifyEmptyChatGPTComposer() {
       sendButton.getAttribute('aria-disabled') !== 'true') {
     return { ok: false, reason: 'existing-draft' };
   }
-  return { ok: true };
+  // ChatGPT clears the file input after React consumes an upload. Track the
+  // composer's existing image sources so we can detect a NEW thumbnail without
+  // mistaking a static icon or previously displayed image for our transfer.
+  const scope = editor.closest('[data-testid="composer"]') || form;
+  const baselineImages = [...scope.querySelectorAll('img')]
+    .filter(img => !img.closest('button'))
+    .map(img => img.currentSrc || img.src || img.getAttribute('src') || '')
+    .filter(Boolean);
+  return { ok: true, baselineImages };
 }
 
 // Only called following a separate explicit 'attach and send' confirmation.
 // Fail closed unless the expected file appears in the composer and the send
 // button is ready. Never submit the form or use Enter as a fallback.
-async function frameSendPreparedImageToChatGPT(expectedUrl) {
+async function frameSendPreparedImageToChatGPT(expectedUrl, baselineImages = []) {
   if (location.protocol !== 'https:' || location.hostname !== 'chatgpt.com') {
     return { ok: false, reason: 'wrong-origin' };
   }
@@ -52,7 +60,15 @@ async function frameSendPreparedImageToChatGPT(expectedUrl) {
     return { ok: false, reason: 'conversation-changed' };
   }
   const name = 'FRAME-vision.png';
-  const timeoutAt = Date.now() + 15_000;
+  // Image uploads can take longer than 15s; wait for a stable thumbnail and
+  // enabled send control, not just the file input's transient FileList.
+  const timeoutAt = Date.now() + 45_000;
+  const knownImages = new Set(Array.isArray(baselineImages) ? baselineImages : []);
+  let readySince = null;
+  const diagnostics = {
+    imageDetected: false, sendButtonFound: false,
+    sendButtonEnabled: false, uploading: false
+  };
 
   while (Date.now() < timeoutAt) {
     if (location.href !== expectedUrl) {
@@ -86,21 +102,48 @@ async function frameSendPreparedImageToChatGPT(expectedUrl) {
     const matchedChip = chips.some(chip => chip.getAttribute('aria-label') === name);
     const preview = form.querySelector('img[alt="FRAME-vision.png"]') ||
       form.querySelector('img[alt="FRAME-vision"]');
-    const hasOwnImage = matchedChip || !!preview || selectedFile;
 
+    const scope = editor.closest('[data-testid="composer"]') || form;
+    const freshThumbnails = [...scope.querySelectorAll('img')].filter(img => {
+      if (img.closest('button')) return false;
+      const src = img.currentSrc || img.src || img.getAttribute('src') || '';
+      return !!src && !knownImages.has(src) &&
+        img.complete !== false && (!Number.isFinite(img.naturalWidth) || img.naturalWidth > 0);
+    });
+    // React may clear input.files, and image thumbnails often have generic
+    // alt text. A NEW image inside the verified composer is still evidence.
+    const hasOwnImage = matchedChip || !!preview || selectedFile ||
+      freshThumbnails.length > 0;
+    const uploading = !!scope.querySelector(
+      '[role="progressbar"],[data-testid*="upload-progress"],[data-testid*="uploading"]'
+    );
     const sendButton = form.querySelector(
       'button[data-testid="send-button"],button[data-testid="fruitjuice-send-button"]'
     );
-    if (hasOwnImage && sendButton && sendButton.isConnected &&
-        !sendButton.disabled && sendButton.getAttribute('aria-disabled') !== 'true') {
-      // The send button becoming available indicates ChatGPT accepted the
-      // attachment well enough to send; no page-private API is called.
-      sendButton.click();
-      return { ok: true, status: 'send-clicked' };
+    const buttonReady = !!sendButton && sendButton.isConnected &&
+      !sendButton.disabled && sendButton.getAttribute('aria-disabled') !== 'true';
+    diagnostics.imageDetected = hasOwnImage;
+    diagnostics.sendButtonFound = !!sendButton;
+    diagnostics.sendButtonEnabled = buttonReady;
+    diagnostics.uploading = uploading;
+    if (hasOwnImage && buttonReady && !uploading) {
+      if (readySince === null) readySince = Date.now();
+      // Verify readiness remains stable before triggering a single send.
+      if (Date.now() - readySince >= 1200) {
+        if (location.href !== expectedUrl ||
+            (editor.innerText || editor.textContent || '').trim() ||
+            [...form.querySelectorAll('textarea')].some(t => t.value?.trim())) {
+          return { ok: false, reason: 'draft-changed' };
+        }
+        sendButton.click();
+        return { ok: true, status: 'send-clicked' };
+      }
+    } else {
+      readySince = null;
     }
-    await new Promise(resolve => setTimeout(resolve, 200));
+    await new Promise(resolve => setTimeout(resolve, 250));
   }
-  return { ok: false, reason: 'attachment-not-ready' };
+  return { ok: false, reason: 'attachment-not-ready', diagnostics };
 }
 
 if (typeof module !== 'undefined' && module.exports) {
