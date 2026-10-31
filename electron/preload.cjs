@@ -5,6 +5,8 @@ const { contextBridge, ipcRenderer } = require('electron');
 // No direct Node or Electron access is exposed to the renderer.
 contextBridge.exposeInMainWorld('aronaDesktop', Object.freeze({
   currentModel: () => ipcRenderer.invoke('avatar:current'),
+  currentViewport: () => ipcRenderer.invoke('avatar:viewport'),
+  onStageViewport: (callback) => ipcRenderer.on('avatar:stage-viewport', (_event, viewport) => callback(viewport)),
   restoreIdleMotion: () => ipcRenderer.invoke('avatar:motion-restore'),
   chooseModel: () => ipcRenderer.invoke('avatar:choose'),
   quit: () => ipcRenderer.send('avatar:quit'),
