@@ -5,6 +5,8 @@ const voiceList = document.getElementById('voice-list');
 const emotionList = document.getElementById('emotion-list');
 const motionList = document.getElementById('motion-list');
 let busy = false;
+let selectedWindowId = null;
+let selectedWindowPluginId = null;
 
 function message(value, error = false) {
   feedback.textContent = value;
@@ -131,7 +133,8 @@ function renderState(state) {
     header.append(name, status);
     const rights = document.createElement('p');
     rights.className = 'hint';
-    rights.textContent = '権限: ウィンドウ名・プロセスIDの取得';
+    rights.textContent = '権限: ウィンドウ名・PID' +
+      (plugin.captureEnabled ? '・選択ウィンドウの撮影' : 'の取得');
     const controls = document.createElement('div');
     controls.className = 'motion-toolbar';
     const toggle = document.createElement('button');
@@ -161,9 +164,20 @@ function renderState(state) {
   document.getElementById('plugin-status').textContent = plugins.message || '';
   document.getElementById('plugin-list').replaceChildren(...pluginCards);
   const windows = Array.isArray(plugins.windows) ? plugins.windows : [];
+  const currentPluginId = plugins.activePluginId;
+  if (!windows.some(item => item.id === selectedWindowId) ||
+      selectedWindowPluginId !== currentPluginId) {
+    selectedWindowId = null;
+    selectedWindowPluginId = null;
+  }
   const windowItems = windows.map(item => {
-    const row = document.createElement('div');
-    row.className = 'plugin-window-item';
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.className = 'plugin-window-item' +
+      (item.id === selectedWindowId ? ' selected' : '');
+    row.dataset.windowId = item.id;
+    row.dataset.pluginId = currentPluginId || '';
+    row.setAttribute('aria-pressed', String(item.id === selectedWindowId));
     const title = document.createElement('span');
     title.textContent = item.title;
     const pid = document.createElement('small');
@@ -178,6 +192,31 @@ function renderState(state) {
     windowItems.push(empty);
   }
   document.getElementById('plugin-windows').replaceChildren(...windowItems);
+  const activePlugin = entriesForPlugins.find(item =>
+    item.id === currentPluginId && item.enabled && item.captureEnabled);
+  const captureButton = document.getElementById('plugin-capture');
+  captureButton.disabled = !selectedWindowId || !activePlugin;
+  if (!captureButton.disabled) {
+    captureButton.dataset.value = JSON.stringify({
+      pluginId: currentPluginId, windowId: selectedWindowId
+    });
+  } else {
+    delete captureButton.dataset.value;
+  }
+  const preview = plugins.capture || null;
+  const previewElement = document.getElementById('plugin-preview');
+  previewElement.hidden = !preview;
+  document.getElementById('plugin-clear').disabled = !preview;
+  const previewImage = document.getElementById('plugin-preview-image');
+  if (preview && typeof preview.dataUrl === 'string' &&
+      preview.dataUrl.startsWith('data:image/png;base64,')) {
+    previewImage.src = preview.dataUrl;
+    document.getElementById('plugin-preview-title').textContent = preview.title || '';
+    document.getElementById('plugin-preview-size').textContent =
+      preview.width + ' × ' + preview.height;
+  } else {
+    previewImage.removeAttribute('src');
+  }
 }
 // The window is transparent and frameless: manually capture edge drags.
 let resizing = null;
@@ -226,7 +265,8 @@ const keepOpen = new Set([
   'voice.autoStart', 'voice.autoHide', 'voice.appHide',
   'motion.folder', 'motion.refresh', 'motion.preview', 'motion.next',
   'motion.previous', 'motion.setIdle', 'motion.stop', 'motion.resetIdle',
-  'plugin.folder', 'plugin.refresh', 'plugin.toggle', 'plugin.listWindows'
+  'plugin.folder', 'plugin.refresh', 'plugin.toggle', 'plugin.listWindows',
+  'plugin.captureWindow', 'plugin.clearCapture'
 ]);
 async function runAction(action, value) {
   if (busy) return;
@@ -251,6 +291,25 @@ async function runAction(action, value) {
 document.addEventListener('click', event => {
   const tab = event.target.closest('[data-tab]');
   if (tab) { tabTo(tab.dataset.tab); return; }
+  const windowRow = event.target.closest('[data-window-id]');
+  if (windowRow) {
+    selectedWindowId = windowRow.dataset.windowId;
+    selectedWindowPluginId = windowRow.dataset.pluginId;
+    for (const item of document.querySelectorAll('[data-window-id]')) {
+      const selected = item === windowRow;
+      item.classList.toggle('selected', selected);
+      item.setAttribute('aria-pressed', String(selected));
+    }
+    const target = document.getElementById('plugin-capture');
+    const plugin = windowRow.dataset.pluginId;
+    const available = [...document.querySelectorAll('[data-action="plugin.listWindows"]')]
+      .some(item => item.dataset.value === plugin && !item.disabled);
+    target.disabled = !available;
+    if (available) target.dataset.value = JSON.stringify({
+      pluginId: plugin, windowId: selectedWindowId
+    });
+    return;
+  }
   const target = event.target.closest('[data-action]');
   if (target && !target.disabled) void runAction(target.dataset.action, target.dataset.value);
 });
