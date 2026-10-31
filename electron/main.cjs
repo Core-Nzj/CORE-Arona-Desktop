@@ -675,6 +675,7 @@ function menuState() {
 }
 
 function closeAvatarMenu() {
+  pluginHost?.clearCapture();
   const popup = menuWindow;
   finishMenuResize();
   menuWindow = null;
@@ -845,6 +846,18 @@ async function executeMenuAction(action, value) {
       const windows = await pluginHost.listWindows(value);
       return 'ウィンドウを' + windows.length + '件取得しました（ローカル表示のみ）';
     }
+    case 'plugin.captureWindow': {
+      if (!pluginHost) throw new Error('プラグイン基盤は未初期化です');
+      let selected;
+      try { selected = JSON.parse(value); } catch { throw new Error('撮影対象が不正です'); }
+      if (!selected || typeof selected.pluginId !== 'string' ||
+          typeof selected.windowId !== 'string') throw new Error('撮影対象が不正です');
+      const image = await pluginHost.captureWindow(selected.pluginId, selected.windowId);
+      return image.title + ' を撮影しました（ローカルのみ、保存なし）';
+    }
+    case 'plugin.clearCapture':
+      pluginHost?.clearCapture();
+      return '撮影画像を消去しました';
     case 'voice.settings':
       openVoiceSettings();
       return '接続設定を開きました';
