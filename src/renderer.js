@@ -78,6 +78,7 @@ let idleInfo = '待機モーションの読込待ち';
 let observedFrameTime = 0;
 let idlePlaybackCheckTimer = null;
 let idleAnimationHandle = null;
+let customIdleMotion = null;
 let activeImportedMotion = null;
 let motionRequestId = 0;
 let motionTransitionQueue = Promise.resolve();
@@ -400,10 +401,11 @@ function returnToIdle(requestId, message) {
     if (requestId !== motionRequestId || !activeMmdModel || !idleAnimationHandle) return;
     const model = activeMmdModel;
     const previous = activeImportedMotion;
+    const target = customIdleMotion || { handle: idleAnimationHandle, endFrame: IDLE_FRAMES };
     isChangingMotion = true;
     try {
-      model.setRuntimeAnimation(idleAnimationHandle);
-      mmdRuntime.setManualAnimationDuration(IDLE_FRAMES);
+      model.setRuntimeAnimation(target.handle);
+      mmdRuntime.setManualAnimationDuration(target.endFrame);
       await mmdRuntime.seekAnimation(0, true);
       if (model !== activeMmdModel) return;
       await mmdRuntime.playAnimation();
@@ -416,7 +418,7 @@ function returnToIdle(requestId, message) {
   });
 }
 
-async function playImportedMotion({ name, bytes }) {
+async function playImportedMotion({ name, bytes }, asIdle = false) {
   const requestId = ++motionRequestId;
   const model = activeMmdModel;
   if (!model || !idleAnimationHandle) {
@@ -451,28 +453,37 @@ async function playImportedMotion({ name, bytes }) {
     await queueMotionTransition(async () => {
       if (requestId !== motionRequestId || model !== activeMmdModel || !idleAnimationHandle) return;
       const previous = activeImportedMotion;
+      const formerIdle = customIdleMotion;
       let handle = null;
       isChangingMotion = true;
       try {
         handle = model.createRuntimeAnimation(animation);
         model.setRuntimeAnimation(handle);
-        activeImportedMotion = { handle, name, endFrame };
+        if (asIdle) {
+          customIdleMotion = { handle, name, endFrame };
+          activeImportedMotion = null;
+        } else {
+          activeImportedMotion = { handle, name, endFrame };
+        }
         mmdRuntime.setManualAnimationDuration(endFrame);
         await mmdRuntime.seekAnimation(0, true);
         if (model !== activeMmdModel) return;
         await mmdRuntime.playAnimation();
         if (previous) model.destroyRuntimeAnimation(previous.handle);
-        reportIdle('外部VMD再生中: ' + name +
+        if (asIdle && formerIdle) model.destroyRuntimeAnimation(formerIdle.handle);
+        reportIdle((asIdle ? 'カスタム待機モーション: ' : '外部VMD再生中: ') + name +
           '\n対応ボーン: ' + boneMatches + ' / 対応モーフ: ' + morphMatches +
           '\n終端フレーム: ' + endFrame);
       } catch (error) {
         if (model === activeMmdModel && idleAnimationHandle) {
           try {
-            model.setRuntimeAnimation(idleAnimationHandle);
-            mmdRuntime.setManualAnimationDuration(IDLE_FRAMES);
+            const target = formerIdle || { handle: idleAnimationHandle, endFrame: IDLE_FRAMES };
+            model.setRuntimeAnimation(target.handle);
+            mmdRuntime.setManualAnimationDuration(target.endFrame);
             await mmdRuntime.seekAnimation(0, true);
             await mmdRuntime.playAnimation();
             activeImportedMotion = null;
+            customIdleMotion = formerIdle;
             if (previous) model.destroyRuntimeAnimation(previous.handle);
             if (handle) model.destroyRuntimeAnimation(handle);
           } catch (restoreError) {
@@ -495,10 +506,22 @@ async function playImportedMotion({ name, bytes }) {
 function onMotionCommand(command) {
   if (command?.type === 'play') {
     void playImportedMotion(command);
+  } else if (command?.type === 'idle') {
+    void playImportedMotion(command, true);
   } else if (command?.type === 'stop') {
     const requestId = ++motionRequestId;
-    void returnToIdle(requestId, '手動停止: 標準待機モーションに戻りました')
+    void returnToIdle(requestId, '手動停止: 待機モーションに戻りました')
       .catch(error => reportIdle('待機への復帰に失敗: ' + String(error?.message ?? error)));
+  } else if (command?.type === 'reset-idle') {
+    const oldIdle = customIdleMotion;
+    const owner = activeMmdModel;
+    customIdleMotion = null;
+    const requestId = ++motionRequestId;
+    void returnToIdle(requestId, '標準待機モーションに戻りました').then(() => {
+      if (owner === activeMmdModel && oldIdle) {
+        owner.destroyRuntimeAnimation(oldIdle.handle);
+      }
+    }).catch(error => reportIdle('待機への復帰に失敗: ' + String(error?.message ?? error)));
   }
 }
 
@@ -538,6 +561,7 @@ async function loadModel(model) {
     ++motionRequestId; // Invalidate pending VMD parses and transitions.
     activeImportedMotion = null;
     idleAnimationHandle = null;
+    customIdleMotion = null;
     if (emotionController) {
       emotionController.dispose();
       emotionController = null;
@@ -598,6 +622,11 @@ async function loadModel(model) {
     }
     placeholder.hidden = true;
     regionDirty = true;
+    // Restore the saved local idle clip after the runtime and its generated
+    // fallback have been initialized. Missing files leave the fallback active.
+    void window.aronaDesktop.restoreIdleMotion().then(motion => {
+      if (seq === loadSequence && motion) return playImportedMotion(motion, true);
+    }).catch(error => console.warn('[CORE motion] idle restore failed:', error));
   } catch (error) {
     if (seq === loadSequence) {
       console.error('Failed to load MMD model:', error);
@@ -719,14 +748,14 @@ scene.onBeforeRenderObservable.add(() => {
 engine.runRenderLoop(() => {
   scene.render();
   if (activeMmdModel && !isChangingMotion && !isSeekingIdleLoop) {
-    const endFrame = activeImportedMotion?.endFrame ?? IDLE_FRAMES;
+    const endFrame = activeImportedMotion?.endFrame ?? customIdleMotion?.endFrame ?? IDLE_FRAMES;
     if (mmdRuntime.currentFrameTime >= endFrame - 1) {
       isSeekingIdleLoop = true;
       if (activeImportedMotion) {
         const finished = activeImportedMotion.name;
         const requestId = ++motionRequestId;
         void returnToIdle(requestId, '外部VMD再生完了: ' + finished +
-          '\n標準待機モーションに戻りました')
+          '\n待機モーションに戻りました')
           .catch(error => reportIdle('待機への復帰に失敗: ' + String(error?.message ?? error)))
           .finally(() => { isSeekingIdleLoop = false; });
       } else {
