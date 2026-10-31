@@ -118,6 +118,16 @@ async function completeMotionLab(session, meta = {}) {
     captureProfile: meta.captureProfile && typeof meta.captureProfile === 'object' ? {
       background: cleanText(meta.captureProfile.background || 'legacy / dark'),
       cameraFov: Number.isFinite(meta.captureProfile.cameraFov) ? meta.captureProfile.cameraFov : null,
+      cameraRadius: Number.isFinite(meta.captureProfile.cameraRadius)
+        ? meta.captureProfile.cameraRadius : null,
+      framingZoom: Number.isFinite(meta.captureProfile.framingZoom)
+        ? meta.captureProfile.framingZoom : null,
+      targetHeightShare: Number.isFinite(meta.captureProfile.targetHeightShare)
+        ? meta.captureProfile.targetHeightShare : null,
+      imageMaxWidth: Number.isFinite(meta.captureProfile.imageMaxWidth)
+        ? meta.captureProfile.imageMaxWidth : null,
+      imageMaxHeight: Number.isFinite(meta.captureProfile.imageMaxHeight)
+        ? meta.captureProfile.imageMaxHeight : null,
       fixedCameraBeta: Number.isFinite(meta.captureProfile.fixedCameraBeta)
         ? meta.captureProfile.fixedCameraBeta : null,
       groundReference: cleanText(meta.captureProfile.groundReference || 'none'),
@@ -140,10 +150,10 @@ async function completeMotionLab(session, meta = {}) {
     '1. index.html の左・右それぞれの正面／斜め／側面コンタクトシートを確認。',
     '2. 同じフレーム番号 F00〜F32 を比較し、足の接地・膝の屈伸・重心・腰肩の回旋・腕振りを評価。', 
     '3. ニュートラルグレー（#969AA4）の撮影背景で黒い靴／服と白い髪の輪郭を確認。画像上部の L/R CONTACT/SWING は生成IKの予定状態。', 
-    '4. 足元の破線 GROUND REF は撮影開始時モデルの最低高さを投影した参考線であり、衝突物理で算出した床面ではありません。',
+    '4. VISUAL BASELINE (F00) の破線は、その視点で最初に撮影したF00のモデル可視輪郭の最下端です。靴とほぼ揃いますが、床面や物理接地の測定ではありません。',
     '5. manifest.json の各コマ leftFoot/rightFoot の x / y / planted を照合。値はモデル空間であり、実際のスクリーン上の足滑り量ではありません。',
     '6. ソース src/walk-vmd.mjs の WALK_STANCE / WALK_STRIDE_HEIGHT_RATIO / 回転クォータニオン / groove / 腕の振りを小さな単位で修正。',
-    '7. 同じモデル・撮影条件で再撮影し、新旧の同方向・同視点・同フレームを比較。撮影条件が異なる場合は manifest.json の captureProfile を確認。',
+    '7. 同じモデル・撮影条件で再撮影し、新旧の同方向・同視点・同フレームを比較。モデルの見た目が小さい場合は画像でなく撮影プロファイルの framingZoom と cameraRadius を確認。',
     '',
     '## 注意',
     '- 静止フレームの観察は実際の歩行速度・床との接触物理・動的な脚滑りの直接測定ではありません。',
