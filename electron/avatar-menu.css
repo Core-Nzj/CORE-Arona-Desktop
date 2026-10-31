@@ -133,6 +133,19 @@ h1 { margin: 5px 0 3px; color: #f5f5f7; font-size: calc(23px * var(--text-scale)
 .vision-share { margin-top: 12px; padding: 12px; border: 1px solid rgba(41,151,255,.34);
   border-radius: 11px; background: #212831; }
 .vision-share[hidden] { display: none; }
+
+.vision-browser { margin-top: 12px; padding: 12px; border: 1px solid rgba(255,255,255,.18);
+  border-radius: 11px; background: #24262b; }
+.vision-browser[hidden], #vision-browser-code-area[hidden] { display: none; }
+.vision-browser .section-title { margin-bottom: 10px; }
+.vision-browser .motion-toolbar .row { min-width: 0; justify-content: center;
+  text-align: center; min-height: 35px; padding: 7px 5px;
+  font-size: calc(10px * var(--text-scale)); white-space: normal; }
+#vision-browser-code { width: 100%; min-width: 0; margin: 4px 0 6px; padding: 9px 8px;
+  box-sizing: border-box; border: 1px solid #47474c; border-radius: 8px;
+  background: #131417; color: #d5e9ff; font: 10px Consolas, monospace; }
+#vision-browser-copy { justify-content: center; width: 100%; min-height: 33px; }
+
 .vision-share .section-title { margin-bottom: 10px; }
 .vision-share-label { margin: 8px 0 3px; color: #868e9a; font-size: calc(9px * var(--text-scale)); }
 .vision-share-value { margin: 0; color: #f1f2f5; font-size: calc(11px * var(--text-scale));
