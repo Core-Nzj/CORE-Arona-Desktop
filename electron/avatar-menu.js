@@ -188,6 +188,7 @@ function renderState(state) {
   document.getElementById('voice-status').textContent = voiceStatus;
   const voiceLight = document.getElementById('voice-light');
   voiceLight.classList.toggle('online', !!state.voiceReady);
+  voiceLight.classList.toggle('pending', !state.voiceReady && /確認中|接続中|処理中/.test(voiceStatus));
   voiceLight.classList.toggle('error', !state.voiceReady && /エラー|失敗|異常|拒否|401|unauthorized|timeout/i.test(voiceStatus));
   const app = state.voisona || {};
   const engineStatus = !app.supported ? 'Windowsのみ対応' :
@@ -198,6 +199,7 @@ function renderState(state) {
   document.getElementById('voisona-status').textContent = engineStatus;
   const engineLight = document.getElementById('voisona-light');
   engineLight.classList.toggle('online', !!app.running && !!app.hasWindow);
+  engineLight.classList.toggle('pending', !app.running && /確認中|処理中/.test(engineStatus));
   engineLight.classList.toggle('error', !!app.error || (!!app.running && !app.hasWindow));
   document.getElementById('voisona-autostart').textContent = '自動起動 ' + (app.autoStart ? 'ON' : 'OFF');
   document.getElementById('voisona-autohide').textContent = '自動非表示 ' + (app.autoHide ? 'ON' : 'OFF');
