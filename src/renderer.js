@@ -77,6 +77,11 @@ let isSeekingIdleLoop = false;
 let idleInfo = '待機モーションの読込待ち';
 let observedFrameTime = 0;
 let idlePlaybackCheckTimer = null;
+let idleAnimationHandle = null;
+let activeImportedMotion = null;
+let motionRequestId = 0;
+let motionTransitionQueue = Promise.resolve();
+let isChangingMotion = false;
 let activeSpeechSource = null;
 let activeSpeechContext = null;
 let activeSpeechAnalyser = null;
@@ -363,6 +368,7 @@ async function attachIdleMotion(container) {
 
     const handle = runtimeModel.createRuntimeAnimation(animation);
     runtimeModel.setRuntimeAnimation(handle);
+    if (activeContainer === container) idleAnimationHandle = handle;
     mmdRuntime.setManualAnimationDuration(IDLE_FRAMES);
     await mmdRuntime.seekAnimation(0, true);
     await mmdRuntime.playAnimation();
@@ -376,6 +382,121 @@ async function attachIdleMotion(container) {
     // Do not destroy the runtime wrapper here because ownership of the
     // underlying skeleton has already moved to MmdRuntime.
     return runtimeModel;
+  }
+}
+
+// Serialize runtime seeks and animation switches so rapid menu clicks cannot
+// leave a previous VMD active after a later stop/play command.
+function queueMotionTransition(callback) {
+  const pending = motionTransitionQueue.then(callback, callback);
+  motionTransitionQueue = pending.catch(error => {
+    console.warn('[CORE motion] animation transition failed:', error);
+  });
+  return pending;
+}
+
+function returnToIdle(requestId, message) {
+  return queueMotionTransition(async () => {
+    if (requestId !== motionRequestId || !activeMmdModel || !idleAnimationHandle) return;
+    const model = activeMmdModel;
+    const previous = activeImportedMotion;
+    isChangingMotion = true;
+    try {
+      model.setRuntimeAnimation(idleAnimationHandle);
+      mmdRuntime.setManualAnimationDuration(IDLE_FRAMES);
+      await mmdRuntime.seekAnimation(0, true);
+      if (model !== activeMmdModel) return;
+      await mmdRuntime.playAnimation();
+      activeImportedMotion = null;
+      if (previous) model.destroyRuntimeAnimation(previous.handle);
+      reportIdle(message);
+    } finally {
+      isChangingMotion = false;
+    }
+  });
+}
+
+async function playImportedMotion({ name, bytes }) {
+  const requestId = ++motionRequestId;
+  const model = activeMmdModel;
+  if (!model || !idleAnimationHandle) {
+    reportIdle('外部VMDを再生できません: 待機モーションの準備ができていません');
+    return;
+  }
+  try {
+    if (!(bytes instanceof Uint8Array) || bytes.byteLength < 54 || bytes.byteLength > 32 * 1024 * 1024) {
+      throw new Error('不正なVMDデータです');
+    }
+    const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+    const animation = await idleLoader.loadFromBufferAsync(name, buffer);
+    if (model !== activeMmdModel || requestId !== motionRequestId) return;
+
+    // A VMD may contain only camera tracks, or bones not present in this PMX.
+    const modelBones = new Set(model.runtimeBones.map(bone => bone.name));
+    const boneMatches = [...animation.boneTracks, ...animation.movableBoneTracks]
+      .filter(track => modelBones.has(track.name)).length;
+    const morphMatches = animation.morphTracks.filter(track =>
+      (model.morph.getMorphIndices(track.name)?.length ?? 0) > 0
+    ).length;
+    if (!boneMatches && !morphMatches) {
+      throw new Error('このモデルに対応するボーン・モーフがありません');
+    }
+    const endFrame = animation.endFrame;
+    if (!Number.isFinite(endFrame) || endFrame < 1 || endFrame > 18000) {
+      throw new Error('モーションの長さが不正です（10分以内のVMDを選択）');
+    }
+
+    await queueMotionTransition(async () => {
+      if (requestId !== motionRequestId || model !== activeMmdModel || !idleAnimationHandle) return;
+      const previous = activeImportedMotion;
+      let handle = null;
+      isChangingMotion = true;
+      try {
+        handle = model.createRuntimeAnimation(animation);
+        model.setRuntimeAnimation(handle);
+        activeImportedMotion = { handle, name, endFrame };
+        mmdRuntime.setManualAnimationDuration(endFrame);
+        await mmdRuntime.seekAnimation(0, true);
+        if (model !== activeMmdModel) return;
+        await mmdRuntime.playAnimation();
+        if (previous) model.destroyRuntimeAnimation(previous.handle);
+        reportIdle('外部VMD再生中: ' + name +
+          '\n対応ボーン: ' + boneMatches + ' / 対応モーフ: ' + morphMatches +
+          '\n終端フレーム: ' + endFrame);
+      } catch (error) {
+        if (model === activeMmdModel && idleAnimationHandle) {
+          try {
+            model.setRuntimeAnimation(idleAnimationHandle);
+            mmdRuntime.setManualAnimationDuration(IDLE_FRAMES);
+            await mmdRuntime.seekAnimation(0, true);
+            await mmdRuntime.playAnimation();
+            activeImportedMotion = null;
+            if (previous) model.destroyRuntimeAnimation(previous.handle);
+            if (handle) model.destroyRuntimeAnimation(handle);
+          } catch (restoreError) {
+            console.warn('[CORE motion] unable to restore idle after failure', restoreError);
+          }
+        }
+        throw error;
+      } finally {
+        isChangingMotion = false;
+      }
+    });
+  } catch (error) {
+    if (requestId === motionRequestId && model === activeMmdModel) {
+      reportIdle('外部VMDを再生できません: ' + String(error?.message ?? error));
+      console.warn('[CORE motion] VMD rejected:', error);
+    }
+  }
+}
+
+function onMotionCommand(command) {
+  if (command?.type === 'play') {
+    void playImportedMotion(command);
+  } else if (command?.type === 'stop') {
+    const requestId = ++motionRequestId;
+    void returnToIdle(requestId, '手動停止: 標準待機モーションに戻りました')
+      .catch(error => reportIdle('待機への復帰に失敗: ' + String(error?.message ?? error)));
   }
 }
 
@@ -412,6 +533,9 @@ async function loadModel(model) {
 
     const oldContainer = activeContainer;
     const oldMmdModel = activeMmdModel;
+    ++motionRequestId; // Invalidate pending VMD parses and transitions.
+    activeImportedMotion = null;
+    idleAnimationHandle = null;
     if (emotionController) {
       emotionController.dispose();
       emotionController = null;
@@ -565,6 +689,7 @@ window.aronaDesktop.onCameraZoom(factor => {
   }
 });
 window.aronaDesktop.onEmotionChange(setEmotion);
+window.aronaDesktop.onMotionCommand(onMotionCommand);
 window.aronaDesktop.onVoiceTest(() => speakLatest('先生、こんにちは！ コア・アロナ・デスクトップから、お話ししています。'));
 window.aronaDesktop.onVoiceText(text => { void speakLatest(text); });
 window.aronaDesktop.onVoiceStop(stopSpeech);
@@ -591,11 +716,23 @@ scene.onBeforeRenderObservable.add(() => {
 
 engine.runRenderLoop(() => {
   scene.render();
-  if (activeMmdModel && !isSeekingIdleLoop && mmdRuntime.currentFrameTime >= IDLE_FRAMES - 1) {
-    isSeekingIdleLoop = true;
-    void mmdRuntime.seekAnimation(0, true).catch(error => {
-      console.warn('Idle animation loop could not be reset', error);
-    }).finally(() => { isSeekingIdleLoop = false; });
+  if (activeMmdModel && !isChangingMotion && !isSeekingIdleLoop) {
+    const endFrame = activeImportedMotion?.endFrame ?? IDLE_FRAMES;
+    if (mmdRuntime.currentFrameTime >= endFrame - 1) {
+      isSeekingIdleLoop = true;
+      if (activeImportedMotion) {
+        const finished = activeImportedMotion.name;
+        const requestId = ++motionRequestId;
+        void returnToIdle(requestId, '外部VMD再生完了: ' + finished +
+          '\n標準待機モーションに戻りました')
+          .catch(error => reportIdle('待機への復帰に失敗: ' + String(error?.message ?? error)))
+          .finally(() => { isSeekingIdleLoop = false; });
+      } else {
+        void mmdRuntime.seekAnimation(0, true).catch(error => {
+          console.warn('Idle animation loop could not be reset', error);
+        }).finally(() => { isSeekingIdleLoop = false; });
+      }
+    }
   }
   // Update the hit silhouette at 5 Hz while animating; a resting model
   // no longer has a truly static outline.
