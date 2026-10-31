@@ -87,6 +87,8 @@ button:focus-visible { outline: 2px solid #2997ff; outline-offset: 2px; }
 .eyebrow { color: #86868b; font-size: calc(9px * var(--text-scale)); font-weight: 600; letter-spacing: .11em; }
 h1 { margin: 5px 0 3px; color: #f5f5f7; font-size: calc(23px * var(--text-scale)); font-weight: 650; line-height: 1.2; letter-spacing: -.02em; }
 .heading p { margin: 0; color: #a1a1a6; font-size: calc(11px * var(--text-scale)); }
+.global-actions { flex: none; margin: 0 15px 9px; }
+.global-actions .row { min-height: 36px; padding: 7px 11px; }
 .tabs {
   display: grid;
   grid-template-columns: repeat(5, minmax(max-content,1fr));
@@ -222,7 +224,6 @@ h1 { margin: 5px 0 3px; color: #f5f5f7; font-size: calc(23px * var(--text-scale)
 .zoom { display: grid; grid-template-columns: 1fr 1.1fr 1fr; gap: 6px; }
 .zoom .row { justify-content: center; padding: 7px 3px; font-size: calc(11px * var(--text-scale)); white-space: nowrap; }
 .hint { margin: 10px 0; color: #86868b; font-size: calc(10px * var(--text-scale)); line-height: 1.5; }
-.exit { margin-top: 23px; }
 .row.danger { background: rgba(255,89,90,.065); color: #ff7777; border-color: rgba(255,89,90,.21); }
 .row.danger:hover:not(:disabled) { background: rgba(255,89,90,.14); border-color: rgba(255,89,90,.39); }
 .connection {

@@ -18,6 +18,9 @@
     <h1>設定</h1>
     <p>アバターと音声の管理</p>
   </header>
+  <div class="global-actions">
+    <button type="button" class="row danger" data-action="app.quit" title="FRAMEアプリを終了"><span>⏻</span>アプリを終了<b>›</b></button>
+  </div>
   <nav class="tabs" role="tablist" aria-label="カテゴリ">
     <button type="button" class="tab selected" data-tab="home" aria-selected="true">ホーム</button>
     <button type="button" class="tab" data-tab="motion" aria-selected="false">モーション</button>
@@ -53,7 +56,6 @@
         <button type="button" class="row danger" data-action="motion.stop">再生を止めて待機に戻す</button>
       </div>
       <p class="hint" id="motion-status">標準待機モーション</p>
-      <button type="button" class="row danger exit" data-action="app.quit"><span>⏻</span>アプリを終了<b>›</b></button>
     </section>
     <section class="page" data-page="motion" hidden>
       <div class="section-title"><span>MOTION LIBRARY</span><small id="motion-count">0件</small></div>
