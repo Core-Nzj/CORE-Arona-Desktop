@@ -44,14 +44,20 @@ function frameVerifyEmptyChatGPTComposer() {
 // Only called following a separate explicit 'attach and send' confirmation.
 // Fail closed unless the expected file appears in the composer and the send
 // button is ready. Never submit the form or use Enter as a fallback.
-async function frameSendPreparedImageToChatGPT() {
+async function frameSendPreparedImageToChatGPT(expectedUrl) {
   if (location.protocol !== 'https:' || location.hostname !== 'chatgpt.com') {
     return { ok: false, reason: 'wrong-origin' };
+  }
+  if (typeof expectedUrl !== 'string' || location.href !== expectedUrl) {
+    return { ok: false, reason: 'conversation-changed' };
   }
   const name = 'FRAME-vision.png';
   const timeoutAt = Date.now() + 15_000;
 
   while (Date.now() < timeoutAt) {
+    if (location.href !== expectedUrl) {
+      return { ok: false, reason: 'conversation-changed' };
+    }
     const editor = document.querySelector('#prompt-textarea') ||
       document.querySelector('[data-testid="composer"] [contenteditable="true"]') ||
       document.querySelector('form [contenteditable="true"]');
