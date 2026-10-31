@@ -759,27 +759,58 @@ function menuState() {
   };
 }
 
-function closeAvatarMenu() {
-  const popup = menuWindow;
-  finishMenuResize();
-  menuWindow = null;
-  if (popup && !popup.isDestroyed()) popup.close();
+// Keep the settings renderer warm, so a right-click starts the effect
+// immediately instead of paying for a new BrowserWindow on every open.
+let menuPrepared = false;
+let menuPendingOpen = false;
+let menuClosing = false;
+let menuTransition = 0;
+let menuHideTimer = null;
+
+function finishMenuHide(generation) {
+  if (generation !== menuTransition || !menuClosing ||
+      !menuWindow || menuWindow.isDestroyed()) return;
+  menuClosing = false;
+  if (menuHideTimer) clearTimeout(menuHideTimer);
+  menuHideTimer = null;
+  menuWindow.hide();
 }
 
-function showAvatarMenu() {
-  if (!mainWindow || mainWindow.isDestroyed() || !currentModelFile) return;
-  closeAvatarMenu();
-  stopAvatarDrag();
-  const pointer = screen.getCursorScreenPoint();
-  const area = screen.getDisplayNearestPoint(pointer).workArea;
-  const layout = normalizeMenuLayout(menuLayout, area);
-  const { width, height } = layout;
-  const x = Math.max(area.x, Math.min(pointer.x + 12, area.x + area.width - width));
-  const y = Math.max(area.y, Math.min(pointer.y + 10, area.y + area.height - height));
+function closeAvatarMenu(force = false) {
+  finishMenuResize();
+  if (!menuWindow || menuWindow.isDestroyed()) return;
+  if (force) {
+    menuPendingOpen = false;
+    menuClosing = false;
+    ++menuTransition;
+    if (menuHideTimer) clearTimeout(menuHideTimer);
+    menuHideTimer = null;
+    const popup = menuWindow;
+    menuWindow = null;
+    menuPrepared = false;
+    popup.destroy();
+    return;
+  }
+  if (!menuWindow.isVisible() || menuClosing) {
+    menuPendingOpen = false;
+    return;
+  }
+  menuClosing = true;
+  const generation = menuTransition;
+  menuWindow.webContents.send('avatar-menu:close-animation', generation);
+  // Fallback if renderer animation is throttled or interrupted by focus loss.
+  menuHideTimer = setTimeout(() => finishMenuHide(generation), 400);
+}
+
+function createAvatarMenuWindow() {
+  if (!mainWindow || mainWindow.isDestroyed() ||
+      (menuWindow && !menuWindow.isDestroyed())) return;
+  const area = screen.getPrimaryDisplay().workArea;
+  const { width, height } = normalizeMenuLayout(menuLayout, area);
   const popup = new BrowserWindow({
     parent: mainWindow,
     title: 'FRAME / Settings',
-    x, y, width, height,
+    x: area.x, y: area.y, width, height,
     frame: false,
     transparent: true,
     backgroundColor: '#00000000',
@@ -791,7 +822,6 @@ function showAvatarMenu() {
     hasShadow: true,
     webPreferences: {
       preload: path.join(__dirname, 'avatar-menu-preload.cjs'),
-      // Keep menu text zoom isolated from the MMD renderer and settings dialog.
       partition: 'frame-panel-ui',
       contextIsolation: true,
       sandbox: true,
@@ -800,30 +830,68 @@ function showAvatarMenu() {
     }
   });
   menuWindow = popup;
+  menuPrepared = false;
   popup.setMenuBarVisibility(false);
   popup.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   popup.webContents.on('will-navigate', event => event.preventDefault());
   popup.webContents.on('did-finish-load', () => {
-    if (!popup.isDestroyed() && menuWindow === popup) {
+    if (menuWindow === popup && !popup.isDestroyed()) {
       popup.webContents.setZoomFactor(menuLayout.zoom);
     }
   });
   popup.once('ready-to-show', () => {
     if (menuWindow !== popup || popup.isDestroyed()) return;
-    popup.show();
-    popup.focus();
+    menuPrepared = true;
+    if (menuPendingOpen) showAvatarMenu();
   });
   popup.on('blur', () => {
-    if (menuWindow === popup && !menuResize && !motionFolderDialogOpen) closeAvatarMenu();
+    if (menuWindow === popup && popup.isVisible() && !menuResize &&
+        !motionFolderDialogOpen && !menuClosing) closeAvatarMenu();
   });
   popup.on('closed', () => {
     if (menuResize?.window === popup) menuResize = null;
-    if (menuWindow === popup) menuWindow = null;
+    if (menuWindow === popup) {
+      menuWindow = null;
+      menuPrepared = false;
+      menuClosing = false;
+    }
   });
   popup.loadFile(path.join(__dirname, 'avatar-menu.html')).catch(error => {
     console.error('[CORE menu] load failed:', error);
-    if (menuWindow === popup) closeAvatarMenu();
+    if (menuWindow === popup) closeAvatarMenu(true);
   });
+}
+
+function showAvatarMenu() {
+  if (!mainWindow || mainWindow.isDestroyed() || !currentModelFile) return;
+  stopAvatarDrag();
+  if (!menuWindow || menuWindow.isDestroyed()) createAvatarMenuWindow();
+  if (!menuWindow || menuWindow.isDestroyed()) return;
+  if (!menuPrepared) { menuPendingOpen = true; return; }
+  const popup = menuWindow;
+  const generation = ++menuTransition;
+  menuPendingOpen = false;
+  menuClosing = false;
+  if (menuHideTimer) clearTimeout(menuHideTimer);
+  menuHideTimer = null;
+  const pointer = screen.getCursorScreenPoint();
+  const area = screen.getDisplayNearestPoint(pointer).workArea;
+  const layout = normalizeMenuLayout(menuLayout, area);
+  const { width, height } = layout;
+  const x = Math.max(area.x, Math.min(pointer.x + 12, area.x + area.width - width));
+  const y = Math.max(area.y, Math.min(pointer.y + 10, area.y + area.height - height));
+  popup.setBounds({ x, y, width, height }, false);
+  // Fire the blue transfer immediately. The view snapshot is local and
+  // already available; optional VoiSona status refresh happens afterward.
+  popup.webContents.send('avatar-menu:open', generation, menuState());
+  popup.show();
+  popup.focus();
+  void voisonaManager.refresh().then(() => {
+    if (menuWindow === popup && !popup.isDestroyed() && popup.isVisible() &&
+        generation === menuTransition && !menuClosing) {
+      popup.webContents.send('avatar-menu:state-update', menuState());
+    }
+  }).catch(error => console.warn('[FRAME UI] voice status refresh failed:', error?.message));
 }
 
 function isMenuWindow(event) {
@@ -1094,7 +1162,7 @@ function createWindow() {
   });
   mainWindow.on('closed', () => {
     stopAvatarWalk();
-    closeAvatarMenu();
+    closeAvatarMenu(true);
     stopAvatarDrag();
     voiceSynthesis?.abort();
     mainWindow = null;
@@ -1123,9 +1191,8 @@ app.whenReady().then(async () => {
   ipcMain.on('avatar:menu', event => {
     if (isOurWindow(event) && currentModelFile) showAvatarMenu();
   });
-  ipcMain.handle('avatar-menu:state', async event => {
+  ipcMain.handle('avatar-menu:state', event => {
     if (!isMenuWindow(event)) throw new Error('Unauthorized menu request');
-    await voisonaManager.refresh();
     return menuState();
   });
   ipcMain.handle('avatar-menu:action', async (event, action, value) => {
@@ -1177,6 +1244,9 @@ app.whenReady().then(async () => {
   });
   ipcMain.on('avatar-menu:close', event => {
     if (isMenuWindow(event)) closeAvatarMenu();
+  });
+  ipcMain.on('avatar-menu:close-complete', (event, generation) => {
+    if (isMenuWindow(event) && Number.isInteger(generation)) finishMenuHide(generation);
   });
   ipcMain.on('avatar:walk-velocity', (event, direction, speed) => {
     if (!isOurWindow(event)) return;
@@ -1319,6 +1389,7 @@ app.whenReady().then(async () => {
     console.warn('[CORE Voice] encrypted settings cannot be restored:', error?.message);
   }
   createWindow();
+  createAvatarMenuWindow(); // Prewarm once during startup, not on right-click.
   speechBridge = new SpeechBridge({
     userDataPath: app.getPath('userData'),
     safeStorage,
@@ -1353,7 +1424,7 @@ app.on('before-quit', event => {
       if (exitWarpPending) return;
       exitWarpPending = true;
       stopAvatarWalk();
-      closeAvatarMenu(); // The popup must not cover the disappearing avatar.
+      closeAvatarMenu(true); // The popup must not cover the disappearing avatar.
       mainWindow.webContents.send('avatar:prepare-quit');
       // The 260ms exit transfer cannot block quitting if rendering stalls.
       exitWarpTimeout = setTimeout(() => {
@@ -1377,7 +1448,7 @@ app.on('before-quit', event => {
     });
     return;
   }
-  closeAvatarMenu();
+  closeAvatarMenu(true);
   browserCredentialPortal?.close();
   speechBridge?.close();
   proxyManager.stop();

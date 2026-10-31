@@ -21,6 +21,7 @@ body { padding: 5px; }
 button { font: inherit; }
 button:focus-visible { outline: 2px solid #2997ff; outline-offset: 2px; }
 .shell {
+  opacity: 0;
   display: flex;
   flex-direction: column;
   position: relative;
@@ -267,6 +268,18 @@ footer { display: flex; align-items: center; gap: 8px; flex: none; min-height: 3
 footer .pulse { flex: none; width: 6px; height: 6px; border-radius: 50%; background: #30c76a; }
 #feedback { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #feedback.error { color: #ff7777; }
+
+/* The digital-transfer canvas exists above the panel but below resize handles.
+   The prepared menu stays transparent until the first open event arrives. */
+.panel-warp {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 90;
+  pointer-events: none;
+}
+.panel-warp[hidden] { display: none; }
 
 /* A permanent 0% recovery action remains visible in any tab. */
 .text-size-recover {

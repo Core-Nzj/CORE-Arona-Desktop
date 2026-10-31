@@ -6,6 +6,10 @@ const emotionList = document.getElementById('emotion-list');
 const motionList = document.getElementById('motion-list');
 const textSizeSlider = document.getElementById('text-size');
 const textSizeValue = document.getElementById('text-size-value');
+const panelWarp = new window.PanelDigitalWarp(
+  document.querySelector('.shell'), document.getElementById('panel-warp')
+);
+let menuOpenGeneration = 0;
 
 function applyTextSize(percent) {
   if (!Number.isInteger(percent) || percent < 0 || percent > 200 || percent % 5 !== 0) return;
@@ -34,8 +38,8 @@ function message(value, error = false) {
   feedback.textContent = value;
   feedback.classList.toggle('error', error);
 }
-// The popup is recreated on each open. Keep the navigation position in the
-// Electron main process (memory only), not in the persistent layout file.
+// The prewarmed popup stays alive between opens. The Electron main process
+// retains its navigation position in memory and resets it when FRAME exits.
 const menuPages = [...document.querySelectorAll('[data-page]')];
 const menuTabs = [...document.querySelectorAll('[data-tab]')];
 const pageScroll = Object.fromEntries(menuPages.map(page => [page.dataset.page, 0]));
@@ -74,7 +78,7 @@ function tabTo(name) {
   if (name === 'voice') voiceList.scrollTop = nestedScroll.voiceList;
   saveViewState();
 }
-function restoreViewState(value) {
+function restoreViewState(value, onReady = () => {}) {
   const saved = value && typeof value === 'object' ? value : {};
   const safeScroll = value => Number.isFinite(value)
     ? Math.max(0, Math.min(100000, Math.round(value))) : 0;
@@ -82,10 +86,12 @@ function restoreViewState(value) {
   nestedScroll.motionList = safeScroll(saved.motionList);
   nestedScroll.voiceList = safeScroll(saved.voiceList);
   const tab = Object.hasOwn(pageScroll, saved.tab) ? saved.tab : 'home';
+  viewReady = false;
   tabTo(tab);
   requestAnimationFrame(() => {
     tabTo(tab);
     viewReady = true;
+    onReady();
   });
 }
 for (const page of menuPages) {
@@ -305,8 +311,25 @@ document.addEventListener('keydown', event => {
   event.preventDefault();
   window.aronaMenu.zoom(reset ? 'reset' : plus ? 'in' : 'out');
 });
-window.aronaMenu.state().then(state => {
+// The open event carries a synchronous snapshot: no voice-engine/network wait
+// and no flash of the previous tab before its scroll position is restored.
+window.aronaMenu.onOpen((generation, state) => {
+  menuOpenGeneration = generation;
+  panelWarp.open();
   renderState(state);
-  restoreViewState(state?.viewState);
-  message('FRAME / READY');
-}).catch(error => message('メニューを初期化できません: ' + String(error?.message ?? error), true));
+  restoreViewState(state?.viewState, () => {
+    if (menuOpenGeneration !== generation) return;
+    panelWarp.ready();
+    message('FRAME / READY');
+  });
+});
+window.aronaMenu.onStateUpdate(state => {
+  // A background voice refresh may finish after the menu has been reopened.
+  if (panelWarp.phase === 'closed' || panelWarp.phase === 'closing') return;
+  renderState(state);
+});
+window.aronaMenu.onCloseAnimation(generation => {
+  if (menuOpenGeneration !== generation) return;
+  saveViewState();
+  panelWarp.close(() => window.aronaMenu.closeComplete(generation));
+});
