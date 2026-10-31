@@ -104,16 +104,20 @@
       <p class="hint" id="plugin-status">プラグインを検索しています…</p>
       <div id="plugin-list" class="plugin-list" role="group" aria-label="インストール済みプラグイン"></div>
       <div class="section-title gap"><span>WINDOW LIST</span><small>ローカル取得</small></div>
-      <p class="hint">視覚プラグインを許可してから一覧を取得してください。画面の撮影・送信は行いません。</p>
+      <p class="hint">一覧から対象を選択して手動撮影します。画像は外部送信しません。</p>
       <div id="plugin-windows" class="window-list" role="group" aria-label="取得したウィンドウ一覧"></div>
-      <div class="motion-toolbar gap-small">
+      <div class="capture-toolbar gap-small">
         <button type="button" class="row primary" id="plugin-capture" data-action="plugin.captureWindow" disabled>選択した窓を撮影</button>
+        <button type="button" class="row" id="plugin-recapture" data-action="plugin.recapture" disabled>再撮影</button>
         <button type="button" class="row" id="plugin-clear" data-action="plugin.clearCapture" disabled>画像を消去</button>
       </div>
+      <pre class="plugin-error" id="plugin-error" role="alert" hidden></pre>
       <div id="plugin-preview" class="plugin-preview" hidden>
         <div class="section-title"><span>LOCAL PREVIEW</span><small id="plugin-preview-size"></small></div>
         <p class="hint" id="plugin-preview-title"></p>
         <img id="plugin-preview-image" alt="選択したウィンドウの撮影画像">
+        <button type="button" class="row plugin-preview-expand" id="plugin-preview-open"
+          data-action="plugin.previewOpen" disabled>拡大プレビュー</button>
         <p class="hint">画像はFRAME内でのみ表示されます。保存・外部送信はしません。</p>
       </div>
       <div class="note">プラグインはPC上のスクリプトを実行します。信頼できる配布元のファイルのみ導入してください。</div>
@@ -137,6 +141,19 @@
   </div>
   <footer><span class="pulse"></span><span id="feedback" role="status" aria-live="polite">FRAME / READY</span></footer>
 </main>
+<div id="plugin-lightbox" class="plugin-lightbox" role="dialog" aria-modal="true"
+  aria-label="撮影画像の拡大プレビュー" hidden>
+  <button type="button" class="plugin-lightbox-backdrop" data-action="plugin.previewClose"
+    aria-label="拡大プレビューを閉じる"></button>
+  <div class="plugin-lightbox-panel">
+    <div class="plugin-lightbox-toolbar">
+      <strong id="plugin-lightbox-title">LOCAL PREVIEW</strong>
+      <button type="button" class="row" id="plugin-lightbox-close"
+        data-action="plugin.previewClose">閉じる</button>
+    </div>
+    <img id="plugin-lightbox-image" alt="撮影画像の拡大プレビュー">
+  </div>
+</div>
 <div class="resize-zone resize-n" data-resize-edge="n" aria-hidden="true"></div>
 <div class="resize-zone resize-s" data-resize-edge="s" aria-hidden="true"></div>
 <div class="resize-zone resize-e" data-resize-edge="e" aria-hidden="true"></div>
