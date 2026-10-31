@@ -1122,11 +1122,15 @@ window.aronaDesktop.onVoiceCommand(handleVoiceCommand);
 // during the scene update without taking over the MMD animation tracks.
 scene.onBeforeRenderObservable.add(() => {
   const delta = Math.min(0.1, engine.getDeltaTime() / 1000);
-  const nextZoom = approachZoom(renderedCameraZoom, targetCameraZoom, delta);
-  if (nextZoom !== renderedCameraZoom) {
-    renderedCameraZoom = nextZoom;
-    camera.fov = fovForZoom(BASE_CAMERA_FOV, renderedCameraZoom);
-    regionDirty = true;
+  // Motion Lab temporarily owns camera FOV for reproducible screenshots.
+  // UI zoom smoothing must not overwrite the fixed review profile.
+  if (!motionCaptureBusy) {
+    const nextZoom = approachZoom(renderedCameraZoom, targetCameraZoom, delta);
+    if (nextZoom !== renderedCameraZoom) {
+      renderedCameraZoom = nextZoom;
+      camera.fov = fovForZoom(BASE_CAMERA_FOV, renderedCameraZoom);
+      regionDirty = true;
+    }
   }
   emotionController?.tick(delta);
   if (activeSpeechAnalyser && lipSyncController) {
