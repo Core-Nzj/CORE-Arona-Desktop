@@ -4,6 +4,9 @@ const { app, BrowserWindow, clipboard, dialog, ipcMain, protocol, screen, safeSt
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { resolveAssetPath } = require('./asset-path.cjs');
+const {
+  stageInDisplay, cursorHitsStageRects, sanitizeHitRectangles, clampAvatarPosition
+} = require('./avatar-overlay.cjs');
 const { scanMotionLibrary, readMotionFile } = require('./motion-library.cjs');
 const {
   BASE_WIDTH, BASE_HEIGHT, INITIAL_SCALE, MIN_SCALE, ZOOM_IN_FACTOR,
@@ -66,6 +69,11 @@ function completeExitWarp() {
   app.quit(); // Continue with the existing VoiSona cleanup and window teardown.
 }
 let avatarScale = INITIAL_SCALE;
+let avatarBounds = null; // Physical avatar extent, independent of the full-display overlay.
+let avatarHitRects = [];
+let avatarHitTimer = null;
+let avatarMouseIgnored = true;
+let avatarDisplayId = null;
 let settingsWindow = null;
 let menuWindow = null;
 let motionFolderDialogOpen = false;
@@ -512,26 +520,36 @@ function isOurWindow(event) {
   return mainWindow && !mainWindow.isDestroyed() && event.sender === mainWindow.webContents;
 }
 
+// Native hit-testing no longer clips pixels. Only the mouse input is shaped;
+// WebGL transparency and antialiasing stay fully intact.
+function updateAvatarMousePassThrough(cursor = screen.getCursorScreenPoint()) {
+  if (!mainWindow || mainWindow.isDestroyed() || !avatarBounds) return;
+  const shouldIgnore = !dragStart && !cursorHitsStageRects(cursor, avatarBounds, avatarHitRects);
+  if (shouldIgnore === avatarMouseIgnored) return;
+  avatarMouseIgnored = shouldIgnore;
+  mainWindow.setIgnoreMouseEvents(shouldIgnore, shouldIgnore ? { forward: true } : undefined);
+}
 function setAvatarRegion(rects) {
-  if (!mainWindow || mainWindow.isDestroyed()) return;
-  if (rects === null) {
-    mainWindow.setShape([]);
-    return;
-  }
-  if (!Array.isArray(rects) || rects.length < 1 || rects.length > 2000) return;
+  if (!avatarBounds) return;
+  avatarHitRects = sanitizeHitRectangles(rects, avatarBounds);
+  updateAvatarMousePassThrough();
+}
 
-  const [windowWidth, windowHeight] = mainWindow.getContentSize();
-  const checked = [];
-  for (const rect of rects) {
-    const values = [rect?.x, rect?.y, rect?.width, rect?.height];
-    if (!values.every(Number.isFinite)) return;
-    const x = Math.max(0, Math.min(windowWidth, Math.floor(rect.x)));
-    const y = Math.max(0, Math.min(windowHeight, Math.floor(rect.y)));
-    const width = Math.max(0, Math.min(windowWidth - x, Math.ceil(rect.width)));
-    const height = Math.max(0, Math.min(windowHeight - y, Math.ceil(rect.height)));
-    if (width && height) checked.push({ x, y, width, height });
+function syncAvatarViewport() {
+  if (!mainWindow || mainWindow.isDestroyed() || !avatarBounds) return;
+  const display = screen.getDisplayMatching(avatarBounds);
+  if (avatarDisplayId !== display.id) {
+    avatarDisplayId = display.id;
+    mainWindow.setBounds(display.bounds, false); // Covers the entire monitor including edges.
   }
-  if (checked.length) mainWindow.setShape(checked);
+  mainWindow.webContents.send('avatar:stage-viewport',
+    stageInDisplay(avatarBounds, display.bounds));
+  updateAvatarMousePassThrough();
+}
+
+function startAvatarHitPolling() {
+  if (avatarHitTimer) clearInterval(avatarHitTimer);
+  avatarHitTimer = setInterval(updateAvatarMousePassThrough, 16);
 }
 
 // Native window motion is driven here rather than by DOM mouse deltas, which
@@ -551,7 +569,8 @@ function beginAvatarWalk(direction, speed) {
       ![-1, 1].includes(direction) || !Number.isFinite(speed)) return;
   stopAvatarDrag();
   const actualSpeed = Math.max(20, Math.min(360, speed));
-  const bounds = mainWindow.getBounds();
+  const bounds = avatarBounds;
+  if (!bounds) return;
   walkState = { direction, speed: actualSpeed, x: bounds.x, last: performance.now() };
   walkTimer = setInterval(() => {
     const state = walkState;
@@ -559,7 +578,7 @@ function beginAvatarWalk(direction, speed) {
       stopAvatarWalk();
       return;
     }
-    const bounds = mainWindow.getBounds();
+    const bounds = avatarBounds;
     const area = screen.getDisplayMatching(bounds).workArea;
     const minimum = area.x;
     const maximum = Math.max(minimum, area.x + area.width - bounds.width);
@@ -568,7 +587,10 @@ function beginAvatarWalk(direction, speed) {
     state.last = now;
     state.x = Math.min(maximum, Math.max(minimum, state.x + state.direction * state.speed * dt));
     const next = Math.round(state.x);
-    if (next !== bounds.x) mainWindow.setPosition(next, bounds.y);
+    if (next !== bounds.x) {
+      avatarBounds = { ...bounds, x: next };
+      syncAvatarViewport();
+    }
     if ((state.direction > 0 && state.x >= maximum) ||
         (state.direction < 0 && state.x <= minimum)) {
       stopAvatarWalk(true); // Stop before the model would slide beyond the screen.
@@ -590,7 +612,7 @@ function startAvatarDrag() {
   stopAvatarDrag();
   dragStart = {
     pointer: screen.getCursorScreenPoint(),
-    position: mainWindow.getPosition(),
+    position: [avatarBounds.x, avatarBounds.y],
     startedAt: Date.now()
   };
 
@@ -609,8 +631,12 @@ function startAvatarDrag() {
     const pointer = screen.getCursorScreenPoint();
     const x = Math.round(dragStart.position[0] + pointer.x - dragStart.pointer.x);
     const y = Math.round(dragStart.position[1] + pointer.y - dragStart.pointer.y);
-    const [oldX, oldY] = mainWindow.getPosition();
-    if (x !== oldX || y !== oldY) mainWindow.setPosition(x, y);
+    const nearest = screen.getDisplayNearestPoint(pointer);
+    const next = clampAvatarPosition({ ...avatarBounds, x, y }, nearest.workArea);
+    if (next.x !== avatarBounds.x || next.y !== avatarBounds.y) {
+      avatarBounds = next;
+      syncAvatarViewport();
+    }
   }, 16);
 }
 
@@ -621,7 +647,8 @@ function zoomAvatarWindow(action) {
     : typeof action === 'number' && Number.isFinite(action) && Math.abs(action) <= 2
       ? action : null;
   if (action !== 'reset' && (steps === null || steps === 0)) return;
-  const currentBounds = mainWindow.getBounds();
+  const currentBounds = avatarBounds;
+  if (!currentBounds) return;
   const workArea = screen.getDisplayMatching(currentBounds).workArea;
   const requestedScale = action === 'reset'
     ? startupScaleForArea(workArea)
@@ -633,7 +660,9 @@ function zoomAvatarWindow(action) {
   if (bounds.x !== currentBounds.x || bounds.y !== currentBounds.y ||
       bounds.width !== currentBounds.width || bounds.height !== currentBounds.height) {
     stopAvatarDrag();
-    mainWindow.setBounds(bounds, false);
+    avatarBounds = bounds;
+    avatarHitRects = []; // Recompute silhouette at the new rendered resolution.
+    syncAvatarViewport();
   }
   mainWindow.webContents.send('avatar:camera-zoom', cameraZoom);
 }
