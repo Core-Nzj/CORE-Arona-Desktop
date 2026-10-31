@@ -57,3 +57,75 @@ button:hover:not(:disabled) { background: #49494e; }
 button:first-child:hover:not(:disabled) { background: #1684f6; }
 button:focus-visible { outline: 2px solid #2997ff; outline-offset: 2px; }
 button:disabled { opacity: .55; cursor: progress; }
+
+/* First-paint startup transfer. CSS keeps moving even before the large
+   Babylon renderer has finished downloading/initializing. Only the overlay,
+   not the model canvas, is visible while the saved MMD is being prepared. */
+body.startup-pending #avatar-canvas { opacity: 0; }
+body.startup-pending #placeholder { visibility: hidden; }
+#startup-transfer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  z-index: 3;
+  opacity: 1;
+  visibility: visible;
+  pointer-events: none;
+  transition: opacity 300ms ease-out, visibility 0s;
+}
+#startup-transfer.is-finished {
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 300ms ease-out, visibility 0s linear 300ms;
+}
+#startup-transfer::before,
+#startup-transfer::after { content: ""; position: absolute; pointer-events: none; }
+#startup-transfer::before {
+  inset: 10% 13%;
+  background:
+    repeating-linear-gradient(to bottom,
+      transparent 0 11px, rgba(65,197,255,.31) 11px 13px,
+      rgba(48,142,224,.15) 13px 16px, transparent 16px 29px),
+    linear-gradient(to bottom, transparent, rgba(65,197,255,.14) 45%,
+      rgba(64,221,207,.16) 60%, transparent);
+  filter: drop-shadow(0 0 7px rgba(65,197,255,.42));
+  mask-image: linear-gradient(to bottom, transparent, #000 12%, #000 88%, transparent);
+  animation: startup-transfer-scan 1100ms linear infinite;
+}
+#startup-transfer::after {
+  inset: 12% 14%;
+  background:
+    linear-gradient(90deg, transparent 8%, rgba(65,197,255,.68) 12% 43%, transparent 45%) 0 8% / 100% 10px no-repeat,
+    linear-gradient(90deg, transparent 35%, rgba(48,142,224,.55) 38% 92%, transparent 94%) 0 25% / 100% 8px no-repeat,
+    linear-gradient(90deg, transparent 17%, rgba(65,197,255,.55) 21% 77%, transparent 79%) 0 48% / 100% 14px no-repeat,
+    linear-gradient(90deg, transparent 42%, rgba(64,221,207,.48) 45% 86%, transparent 88%) 0 69% / 100% 7px no-repeat,
+    linear-gradient(90deg, transparent 8%, rgba(65,197,255,.65) 10% 56%, transparent 59%) 0 88% / 100% 12px no-repeat;
+  filter: drop-shadow(0 0 6px rgba(65,197,255,.36));
+  animation: startup-transfer-fragments 450ms steps(4,end) infinite alternate;
+}
+.startup-scan-beam {
+  position: absolute;
+  left: 13%;
+  width: 74%;
+  height: 3px;
+  background: linear-gradient(90deg, transparent, rgba(65,197,255,.9),
+    rgba(64,221,207,.65), transparent);
+  box-shadow: 0 0 15px rgba(65,197,255,.45);
+  animation: startup-transfer-beam 1350ms linear infinite;
+}
+@keyframes startup-transfer-scan {
+  from { transform: translateY(-11%); opacity: .36; }
+  50% { opacity: .88; }
+  to { transform: translateY(11%); opacity: .36; }
+}
+@keyframes startup-transfer-fragments {
+  from { transform: translateX(-13px); opacity: .48; }
+  50% { opacity: .95; }
+  to { transform: translateX(13px); opacity: .6; }
+}
+@keyframes startup-transfer-beam {
+  from { top: 7%; opacity: 0; }
+  12% { opacity: .9; }
+  88% { opacity: .9; }
+  to { top: 93%; opacity: 0; }
+}
