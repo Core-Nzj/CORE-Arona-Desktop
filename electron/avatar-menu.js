@@ -41,6 +41,8 @@ let lastPluginError = '';
 let currentState = null;
 let shareConsentRequestId = null;
 let shareConsentChecked = false;
+let browserConsentForRequestId = null;
+let browserConsentChecked = false;
 
 function message(value, error = false) {
   feedback.textContent = value;
@@ -347,6 +349,7 @@ function renderState(state) {
 
   const preview = plugins.capture || null;
   updateVisionSharePanel(preview, state.visionShare);
+  updateVisionBrowserPanel(preview, state.visionShare, state.browserShare);
   const previewElement = document.getElementById('plugin-preview');
   previewElement.hidden = !preview;
   document.getElementById('plugin-clear').disabled = captureBusy || !preview;
@@ -487,13 +490,59 @@ document.getElementById('vision-share-consent').addEventListener('change', event
 setInterval(() => {
   if (!currentState || panelWarp.phase === 'closed' || panelWarp.phase === 'closing') return;
   updateVisionSharePanel(currentState.plugins?.capture, currentState.visionShare);
+  updateVisionBrowserPanel(currentState.plugins?.capture, currentState.visionShare,
+    currentState.browserShare);
 }, 1000);
+
+function updateVisionBrowserPanel(preview, localShare, browserShare) {
+  const root = document.getElementById('vision-browser');
+  root.hidden = !preview;
+  const local = localShare?.session;
+  const browser = browserShare?.session;
+  const receipt = browserShare?.receipt;
+  if (browserConsentForRequestId !== (local?.requestId || null)) {
+    browserConsentForRequestId = local?.requestId || null;
+    browserConsentChecked = false;
+  }
+  const awaiting = browser?.status === 'delivering' && !!receipt;
+  const ready = !!preview && local?.status === 'captured' &&
+    local.expiresAt > Date.now() && !awaiting;
+  const checkbox = document.getElementById('vision-browser-consent');
+  if (!ready) browserConsentChecked = false;
+  checkbox.disabled = !ready || busy;
+  checkbox.checked = ready && browserConsentChecked;
+  const start = document.getElementById('vision-browser-start');
+  start.disabled = !ready || !browserConsentChecked || busy;
+  start.dataset.value = 'confirm-browser-handoff';
+  const cancel = document.getElementById('vision-browser-cancel');
+  cancel.disabled = !awaiting || busy;
+  const codeArea = document.getElementById('vision-browser-code-area');
+  codeArea.hidden = !awaiting;
+  document.getElementById('vision-browser-code').value = awaiting ? receipt.token : '';
+  document.getElementById('vision-browser-copy').disabled = !awaiting || busy;
+  let label = '未準備';
+  if (awaiting) label = 'Chrome受信待機中';
+  else if (browser?.status === 'delivered') label = 'Chrome受領済み';
+  else if (browser?.status === 'expired') label = '期限切れ';
+  else if (browser?.status === 'revoked') label = '取消済み';
+  else if (browser?.status === 'failed') label = '受信失敗';
+  else if (ready) label = '撮影済み・確認待ち';
+  document.getElementById('vision-browser-status').textContent = label;
+}
+document.getElementById('vision-browser-consent').addEventListener('change', event => {
+  if (event.target.disabled) return;
+  browserConsentChecked = event.target.checked;
+  updateVisionBrowserPanel(currentState?.plugins?.capture,
+    currentState?.visionShare, currentState?.browserShare);
+});
 
 function discardCapture() {
   lastCaptureRequest = null;
   lastPluginError = '';
   shareConsentRequestId = null;
   shareConsentChecked = false;
+  browserConsentForRequestId = null;
+  browserConsentChecked = false;
   closePreviewLightbox(false);
   if (currentState) {
     currentState = { ...currentState, plugins: { ...currentState.plugins, capture: null } };
@@ -508,7 +557,8 @@ const keepOpen = new Set([
   'motion.previous', 'motion.setIdle', 'motion.stop', 'motion.resetIdle', 'motion.warpToggle',
   'motion.transition',
   'plugin.folder', 'plugin.refresh', 'plugin.toggle', 'plugin.listWindows',
-  'plugin.captureWindow', 'plugin.clearCapture', 'vision.deliverLocal', 'vision.revoke'
+  'plugin.captureWindow', 'plugin.clearCapture', 'vision.deliverLocal', 'vision.revoke',
+  'vision.beginBrowser', 'vision.copyBrowserToken', 'vision.cancelBrowser'
 ]);
 
 async function runAction(action, value) {
