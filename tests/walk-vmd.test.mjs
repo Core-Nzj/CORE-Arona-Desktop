@@ -89,6 +89,21 @@ test('planted foot opposes window travel at constant rate', () => {
   assert.ok(Math.abs(walkTravelSpeed(stride,100)*WALK_SECONDS*WALK_STANCE-stride*100) < 1e-9);
 });
 
+test('arms oppose the ipsilateral foot without reversing local swing on a left turn', () => {
+  for (const direction of [-1, 1]) {
+    const samples = extractVmd(buildWalkingVmd({ boneNames: bones, direction }).buffer);
+    for (const frame of [0, 18]) {
+      const at = name => samples.find(s => s.name === name && s.frame === frame);
+      const footForward = at('左足ＩＫ').pos[0] * direction;
+      // Positive arm X pitches the lowered hand forwards (-Z in MMD).
+      assert.ok(at('左腕').quat[0] * footForward < 0);
+      assert.ok(at('右腕').quat[0] * footForward > 0);
+      assert.ok(at('左ひじ').quat[1] < 0);
+      assert.ok(at('右ひじ').quat[1] > 0);
+    }
+  }
+});
+
 test('swing foot lifts and returns to its first position without discontinuity', () => {
   const stride=2, lift=.35;
   const middle=walkFootAt((WALK_STANCE+1)/2,stride,lift,-1);

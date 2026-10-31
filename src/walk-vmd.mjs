@@ -86,22 +86,27 @@ export function buildWalkingVmd({ boneNames = [], modelHeight = 10, direction = 
 
     const cycle = Math.sin(TAU * phase);
     const doubleStep = Math.cos(2 * TAU * phase);
+    // Stance runs from 0 to WALK_STANCE: the foot passes beneath the
+    // body at its midpoint. Arms reverse at contact/toe-off, not midstance.
+    const armSwing = Math.sin(TAU * (phase - WALK_STANCE / 2));
     // MMD rigs commonly make 下半身 and 上半身 separate children of センター.
     // Previously the chest turned +12 degrees, opposite the travel direction,
     // leaving FRAME's face pointed toward the viewer while its legs walked sideways.
     // Face the chest almost along the path; let the neck open just a little
     // toward the camera so the character stays readable from a desktop view.
-    key('hip', frame, quaternionMultiply(QY(-sign * 55 * DEG), QZ(1.8 * DEG * cycle)));
-    key('upper', frame, quaternionMultiply(QY(-sign * 78 * DEG), QZ(-2.5 * DEG * cycle)));
-    key('neck', frame, QY(sign * 8 * DEG));
+    key('hip', frame, quaternionMultiply(QY((-sign * 55 + 2 * cycle) * DEG), QZ(1.8 * DEG * cycle)));
+    key('upper', frame, quaternionMultiply(QY((-sign * 78 - 3 * cycle) * DEG), QZ(-2.5 * DEG * cycle)));
+    key('neck', frame, QY((sign * 8 + 1.5 * cycle) * DEG));
     key('groove', frame, id, [0, height * 0.004 * (1 - doubleStep), 0]);
 
     // Arms swing opposite the feet. Keep the safe lowered-arm bias from the
     // existing idle motion so hands are less likely to cut through clothing.
-    key('leftArm', frame, quaternionMultiply(QX(-sign * 13 * DEG * cycle), QZ(-50 * DEG)));
-    key('rightArm', frame, quaternionMultiply(QX(sign * 13 * DEG * cycle), QZ(50 * DEG)));
-    key('leftElbow', frame, QX(-7 * DEG - 3 * DEG * cycle));
-    key('rightElbow', frame, QX(-7 * DEG + 3 * DEG * cycle));
+    // Torso yaw already handles travel direction; local arm swing must not
+    // reverse again when walking left. Standard MMD elbows bend about Y.
+    key('leftArm', frame, quaternionMultiply(QX(16 * DEG * armSwing), QZ(-50 * DEG)));
+    key('rightArm', frame, quaternionMultiply(QX(-16 * DEG * armSwing), QZ(50 * DEG)));
+    key('leftElbow', frame, QY(-(12 + 5 * armSwing) * DEG));
+    key('rightElbow', frame, QY((12 - 5 * armSwing) * DEG));
   }
   return { buffer: encodeGeneratedVmd(frames, [], 'FRAME Walk'), stride, frames: WALK_FRAMES, rig: bones };
 }
