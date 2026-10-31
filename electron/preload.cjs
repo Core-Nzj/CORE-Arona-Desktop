@@ -8,6 +8,8 @@ contextBridge.exposeInMainWorld('aronaDesktop', Object.freeze({
   restoreIdleMotion: () => ipcRenderer.invoke('avatar:motion-restore'),
   chooseModel: () => ipcRenderer.invoke('avatar:choose'),
   quit: () => ipcRenderer.send('avatar:quit'),
+  quitReady: () => ipcRenderer.send('avatar:quit-ready'),
+  onPrepareQuit: callback => ipcRenderer.on('avatar:prepare-quit', () => callback()),
   showMenu: () => ipcRenderer.send('avatar:menu'),
   reportIdleStatus: (text) => ipcRenderer.send('avatar:idle-status', text),
   synthesizeSpeech: (request) => ipcRenderer.invoke('avatar:voice-synthesize', request),
