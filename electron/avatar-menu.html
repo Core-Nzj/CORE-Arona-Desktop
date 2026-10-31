@@ -21,6 +21,7 @@
     <button type="button" class="tab selected" data-tab="home" aria-selected="true">ホーム</button>
     <button type="button" class="tab" data-tab="motion" aria-selected="false">モーション</button>
     <button type="button" class="tab" data-tab="voice" aria-selected="false">音声</button>
+    <button type="button" class="tab" data-tab="plugins" aria-selected="false">拡張</button>
     <button type="button" class="tab" data-tab="emotion" aria-selected="false">表情</button>
     <button type="button" class="tab" data-tab="status" aria-selected="false">診断</button>
   </nav>
@@ -92,6 +93,20 @@
         <button type="button" class="row" data-action="voice.token">ChatGPT連携トークンをコピー</button>
         <button type="button" class="row danger" data-action="voice.stop">再生停止</button>
       </div>
+    </section>
+    <section class="page" data-page="plugins" hidden>
+      <div class="section-title"><span>FRAME PLUGINS</span><small id="plugin-count">0件</small></div>
+      <p class="description">追加機能は必要なものだけ有効化できます。未導入でも読み上げ・アバター表示には影響しません。</p>
+      <div class="motion-toolbar">
+        <button type="button" class="row" data-action="plugin.folder">フォルダを開く</button>
+        <button type="button" class="row" data-action="plugin.refresh">再読み込み</button>
+      </div>
+      <p class="hint" id="plugin-status">プラグインを検索しています…</p>
+      <div id="plugin-list" class="plugin-list" role="group" aria-label="インストール済みプラグイン"></div>
+      <div class="section-title gap"><span>WINDOW LIST</span><small>ローカル取得</small></div>
+      <p class="hint">視覚プラグインを許可してから一覧を取得してください。画面の撮影・送信は行いません。</p>
+      <div id="plugin-windows" class="window-list" role="group" aria-label="取得したウィンドウ一覧"></div>
+      <div class="note">プラグインはPC上のスクリプトを実行します。信頼できる配布元のファイルのみ導入してください。</div>
     </section>
     <section class="page" data-page="emotion" hidden>
       <div class="section-title"><span>EXPRESSION</span><small>表情コントロール</small></div>
