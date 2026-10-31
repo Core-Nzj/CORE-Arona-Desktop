@@ -50,7 +50,7 @@
       <div class="section-title gap"><span>MOTION</span><small>ローカルVMD</small></div>
       <div class="stack">
         <button type="button" class="row primary" data-action="motion.play">VMDを選択して1回再生<b>›</b></button>
-        <button type="button" class="row" data-action="motion.stop">再生を止めて待機に戻す</button>
+        <button type="button" class="row danger" data-action="motion.stop">再生を止めて待機に戻す</button>
       </div>
       <p class="hint" id="motion-status">標準待機モーション</p>
       <button type="button" class="row danger exit" data-action="app.quit"><span>⏻</span>アプリを終了<b>›</b></button>
@@ -80,7 +80,7 @@
       <p class="motion-current" id="motion-selected">選択中: なし</p>
       <div class="stack">
         <button type="button" class="row primary" data-action="motion.setIdle" id="motion-set-idle">この動きを待機に設定<b>›</b></button>
-        <button type="button" class="row" data-action="motion.stop">待機モーションへ戻す</button>
+        <button type="button" class="row danger" data-action="motion.stop">待機モーションへ戻す</button>
         <button type="button" class="row" data-action="motion.resetIdle">標準待機に戻す</button>
       </div>
       <p class="hint" id="motion-idle">待機: 標準</p>
@@ -89,7 +89,7 @@
         <button type="button" class="row" data-action="motion.walkLeft" id="walk-left">← 左へ歩く</button>
         <button type="button" class="row" data-action="motion.walkRight" id="walk-right">右へ歩く →</button>
       </div>
-      <button type="button" class="row" data-action="motion.walkStop" id="walk-stop">歩行を停止</button>
+      <button type="button" class="row danger" data-action="motion.walkStop" id="walk-stop">歩行を停止</button>
       <p class="hint">左右の足IKに対応したモデルで使用できます。画面端で自動停止します。</p>
     </section>
     <section class="page" data-page="voice" hidden>
@@ -107,7 +107,7 @@
       </div>
       <div class="section-title gap"><span>VOICE CONNECTION</span><small>音声設定</small></div>
       <div class="stack">
-        <button type="button" class="row primary" data-action="voice.settings"><span>⚙</span>接続設定・認証情報<b>›</b></button>
+        <button type="button" class="row settings-link" data-action="voice.settings"><span>⚙</span>接続設定・認証情報<b>›</b></button>
         <button type="button" class="row" data-action="voice.refresh"><span>↻</span>Proxyを起動・音声一覧を更新</button>
       </div>
       <div class="section-title gap"><span>SELECT VOICE</span><small>使用する音声</small></div>
