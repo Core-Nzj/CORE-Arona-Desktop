@@ -11,9 +11,11 @@ const source = fs.readFileSync(path.join(__dirname, '..',
 const URL = 'https://chatgpt.com/c/frame-test';
 
 function rig({ hostname = 'chatgpt.com', text = '', existingFile = false,
-  ownPng = true, sendEnabled = true, hasForm = true, url = URL } = {}) {
+  ownPng = true, sendEnabled = true, hasForm = true, url = URL,
+  newThumbnailAfter = null, uploadingFor = 0, baselineThumbnail = false } = {}) {
   let clicked = 0;
   let clock = 0;
+  let imageChecks = 0;
   const sendButton = {
     disabled: !sendEnabled,
     isConnected: true,
@@ -24,6 +26,9 @@ function rig({ hostname = 'chatgpt.com', text = '', existingFile = false,
   const form = {
     querySelector(selector) {
       if (selector.includes('send-button')) return sendButton;
+      if (selector.includes('progressbar') || selector.includes('upload-progress')) {
+        return imageChecks <= uploadingFor ? { getAttribute: () => 'loading' } : null;
+      }
       if (selector.includes('attachment') || selector.includes('file-chip')) {
         return existingFile ? { getAttribute: () => 'other.png' } : null;
       }
@@ -33,6 +38,16 @@ function rig({ hostname = 'chatgpt.com', text = '', existingFile = false,
       if (selector === 'textarea') return [textarea];
       if (selector === '[role="group"][aria-label]') {
         return ownPng ? [{ getAttribute: () => 'FRAME-vision.png' }] : [];
+      }
+      if (selector === 'img') {
+        imageChecks++;
+        const source = baselineThumbnail ? 'blob:before' :
+          newThumbnailAfter !== null && imageChecks >= newThumbnailAfter ?
+            'blob:frame-upload' : null;
+        return source ? [{
+          currentSrc: source, complete: true, naturalWidth: 480,
+          closest: () => null, getAttribute: () => source
+        }] : [];
       }
       return [];
     }
@@ -108,6 +123,32 @@ test('no matching file and no enabled send button means no click', async () => {
   const rigged = rig({ ownPng: false, sendEnabled: false });
   const response = await rigged.funcs.frameSendPreparedImageToChatGPT(URL);
   assert.equal(response.reason, 'attachment-not-ready');
+  assert.equal(rigged.getClicks(), 0);
+});
+
+test('late ChatGPT thumbnail after cleared input is eventually accepted', async () => {
+  const rigged = rig({ ownPng: false, sendEnabled: true, newThumbnailAfter: 3 });
+  const result = await rigged.funcs.frameSendPreparedImageToChatGPT(URL, []);
+  assert.equal(result.ok, true);
+  assert.equal(result.status, 'send-clicked');
+  assert.equal(rigged.getClicks(), 1);
+});
+
+test('unchanged pre-existing image is not mistaken for our attachment', async () => {
+  const rigged = rig({ ownPng: false, sendEnabled: true, baselineThumbnail: true });
+  const result = await rigged.funcs.frameSendPreparedImageToChatGPT(URL, ['blob:before']);
+  assert.equal(result.reason, 'attachment-not-ready');
+  assert.equal(result.diagnostics.imageDetected, false);
+  assert.equal(rigged.getClicks(), 0);
+});
+
+test('progress indicator blocks premature send despite an enabled button', async () => {
+  const rigged = rig({ ownPng: false, sendEnabled: true,
+    newThumbnailAfter: 1, uploadingFor: 100 });
+  const result = await rigged.funcs.frameSendPreparedImageToChatGPT(URL, []);
+  assert.equal(result.reason, 'attachment-not-ready');
+  assert.equal(result.diagnostics.imageDetected, true);
+  assert.equal(result.diagnostics.uploading, true);
   assert.equal(rigged.getClicks(), 0);
 });
 
