@@ -535,9 +535,13 @@ function setAvatarRegion(rects) {
   updateAvatarMousePassThrough();
 }
 
+function avatarDisplay() {
+  return screen.getAllDisplays().find(display => display.id === avatarDisplayId) ||
+    screen.getDisplayMatching(avatarBounds);
+}
 function syncAvatarViewport(preferredDisplay = null) {
   if (!mainWindow || mainWindow.isDestroyed() || !avatarBounds) return;
-  const display = preferredDisplay || screen.getDisplayMatching(avatarBounds);
+  const display = preferredDisplay || avatarDisplay();
   if (avatarDisplayId !== display.id) {
     avatarDisplayId = display.id;
     mainWindow.setBounds(display.bounds, false); // Covers the entire monitor including edges.
@@ -579,7 +583,7 @@ function beginAvatarWalk(direction, speed) {
       return;
     }
     const bounds = avatarBounds;
-    const area = screen.getDisplayMatching(bounds).workArea;
+    const area = avatarDisplay().workArea;
     const minimum = area.x;
     const maximum = Math.max(minimum, area.x + area.width - bounds.width);
     const now = performance.now();
@@ -649,7 +653,7 @@ function zoomAvatarWindow(action) {
   if (action !== 'reset' && (steps === null || steps === 0)) return;
   const currentBounds = avatarBounds;
   if (!currentBounds) return;
-  const workArea = screen.getDisplayMatching(currentBounds).workArea;
+  const workArea = avatarDisplay().workArea;
   const requestedScale = action === 'reset'
     ? startupScaleForArea(workArea)
     : avatarScale * Math.pow(ZOOM_IN_FACTOR, steps);
@@ -1186,7 +1190,7 @@ function createWindow() {
   mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
   mainWindow.webContents.on('did-finish-load', () => {
     if (!mainWindow || mainWindow.isDestroyed()) return;
-    const area = screen.getDisplayMatching(avatarBounds).workArea;
+    const area = avatarDisplay().workArea;
     const { cameraZoom } = boundsForScale(avatarBounds, area, avatarScale);
     syncAvatarViewport();
     mainWindow.webContents.send('avatar:camera-zoom', cameraZoom);
@@ -1221,7 +1225,7 @@ app.whenReady().then(async () => {
 
   ipcMain.handle('avatar:viewport', event => {
     if (!isOurWindow(event) || !avatarBounds) return null;
-    return stageInDisplay(avatarBounds, screen.getDisplayMatching(avatarBounds).bounds);
+    return stageInDisplay(avatarBounds, avatarDisplay().bounds);
   });
   ipcMain.handle('avatar:current', () => infoForCurrentModel());
   ipcMain.handle('avatar:motion-restore', async event => {
