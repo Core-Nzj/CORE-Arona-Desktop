@@ -484,7 +484,8 @@ async function switchMotionWithBlend(requestId, model, targetAnimation, change) 
     while (mmdRuntime.currentFrameTime < BLEND_FRAMES - 0.5 &&
            performance.now() < deadline &&
            model === activeMmdModel && !exitWarpStarted) {
-      await new Promise(resolve => requestAnimationFrame(resolve));
+      // Wall-clock polling also completes if the OS throttles animation frames.
+      await new Promise(resolve => setTimeout(resolve, 16));
     }
     blendReady = model === activeMmdModel && !exitWarpStarted &&
       mmdRuntime.currentFrameTime >= BLEND_FRAMES - 0.5;
@@ -528,6 +529,7 @@ async function switchMotionWithPolicy(
     toEndFrame: targetAnimation?.endFrame,
     isAutomaticReturn: automaticReturn
   });
+  console.info('[FRAME motion] transition', { requested: motionTransitionMode, chosen: choice.method, reason: choice.reason, similarity: choice.similarity });
   if (animate && !exitWarpStarted && choice.method === 'blend') {
     if (await switchMotionWithBlend(requestId, model, targetAnimation, change)) return;
   }
