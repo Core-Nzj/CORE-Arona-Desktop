@@ -9,6 +9,18 @@ export function shouldAnimateMotionWarp({ animate, enabled, available, placehold
 // environment, even when Chromium cannot copy a GPU canvas into 2D Canvas.
 // Fragments and scanning highlights are optional, never a reason to skip fade.
 const clamp = value => Math.max(0, Math.min(1, value));
+
+// Weighted palette for individual digital fragments and scanlines:
+// existing cyan 60%, deeper blue 30%, turquoise 10%.
+export const WARP_PALETTE = Object.freeze(['65, 197, 255', '48, 142, 224', '64, 221, 207']);
+export function warpColorForSeed(seed) {
+  return WARP_PALETTE[seed < 0.6 ? 0 : seed < 0.9 ? 1 : 2];
+}
+export const WARP_HIDDEN_MS = 1000;
+export function remainingWarpHoldMs(startedAt, now, holdMs = WARP_HIDDEN_MS) {
+  return Math.max(0, holdMs - Math.max(0, now - startedAt));
+}
+
 const wave = number => {
   const x = Math.sin(number * 12.9898 + 78.233) * 43758.5453;
   return x - Math.floor(x);
@@ -126,11 +138,17 @@ export class DigitalBodyWarp {
       }
       ctx.globalAlpha = 1;
       ctx.globalCompositeOperation = 'source-atop';
-      ctx.fillStyle = 'rgba(65, 197, 255, ' + (0.22 * glitch).toFixed(3) + ')';
-      ctx.fillRect(0, 0, width, height);
-      ctx.fillStyle = 'rgba(155, 229, 255, ' + (0.45 * glitch).toFixed(3) + ')';
+      // Give each fragment its own weighted palette color; keep the existing
+      // cyan dominant while reserving a few stronger blue/turquoise accents.
+      for (let y = 0, band = 0; y < height; y += bandHeight, band++) {
+        const color = warpColorForSeed(wave(band * 17.13 + tick * 0.37));
+        ctx.fillStyle = 'rgba(' + color + ', ' + (0.34 * glitch).toFixed(3) + ')';
+        ctx.fillRect(0, y, width, Math.min(bandHeight, height - y));
+      }
       for (let i = 0; i < 14; i++) {
         const y = Math.round(wave(i * 11.3 + tick * 0.08) * height);
+        const color = warpColorForSeed(wave(i * 21.47 + tick * 0.16));
+        ctx.fillStyle = 'rgba(' + color + ', ' + (0.45 * glitch).toFixed(3) + ')';
         ctx.fillRect(0, y, width, Math.max(1, Math.round(height / 700)));
       }
     } catch (error) {
