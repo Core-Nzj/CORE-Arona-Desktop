@@ -6,7 +6,7 @@ import { makeWebAudioBuffer } from './pcm-playback.mjs';
 import { LipSyncController, mouthLevelFromSamples } from './lip-sync.mjs';
 import { SpeechPlaybackQueue } from './speech-queue.mjs';
 import { approachZoom, fovForZoom } from './camera-zoom.mjs';
-import { DigitalBodyWarp, shouldAnimateMotionWarp } from './digital-body-warp.mjs';
+import { DigitalBodyWarp, shouldAnimateMotionWarp, remainingWarpHoldMs } from './digital-body-warp.mjs';
 import { Engine } from '@babylonjs/core/Engines/engine';
 import { Scene } from '@babylonjs/core/scene';
 import { ArcRotateCamera } from '@babylonjs/core/Cameras/arcRotateCamera';
@@ -82,6 +82,7 @@ let idlePlaybackCheckTimer = null;
 let idleAnimationHandle = null;
 let currentMotionHandle = null;
 let motionWarpEnabled = true;
+let exitWarpStarted = false;
 let customIdleMotion = null;
 let activeImportedMotion = null;
 let motionRequestId = 0;
@@ -408,22 +409,32 @@ function queueMotionTransition(callback) {
 // The same-motion idle loop never invokes this transfer.
 async function switchMotionWithWarp(requestId, model, change, animate = true) {
   const canAnimate = shouldAnimateMotionWarp({
-    animate,
+    animate: animate && !exitWarpStarted,
     enabled: motionWarpEnabled,
     available: bodyWarp.enabled,
     placeholderHidden: placeholder.hidden
   });
   if (canAnimate) await bodyWarp.conceal();
-  if (requestId !== motionRequestId || model !== activeMmdModel) {
-    if (canAnimate) bodyWarp.cancel();
+  if (requestId !== motionRequestId || model !== activeMmdModel || exitWarpStarted) {
+    if (canAnimate && !exitWarpStarted) bodyWarp.cancel();
     return false;
   }
+  const completelyHiddenAt = performance.now();
   try {
+    // Change the VMD only while invisible. The hidden interval is counted
+    // from the end of disappearance, including any seek/loading overhead.
     await change();
-    if (canAnimate) await bodyWarp.reveal();
+    if (canAnimate) {
+      const remaining = remainingWarpHoldMs(completelyHiddenAt, performance.now());
+      if (remaining > 0) await new Promise(resolve => setTimeout(resolve, remaining));
+      if (requestId !== motionRequestId || model !== activeMmdModel || exitWarpStarted) return false;
+      await bodyWarp.reveal();
+    }
     return true;
   } finally {
-    if (canAnimate) bodyWarp.cancel();
+    // A quit transition may have taken ownership of the overlay. Do not
+    // accidentally cancel its disappearance when an old VMD request finishes.
+    if (canAnimate && !exitWarpStarted) bodyWarp.cancel();
   }
 }
 
@@ -770,6 +781,24 @@ window.aronaDesktop.onCameraZoom(factor => {
 });
 window.aronaDesktop.onEmotionChange(setEmotion);
 window.aronaDesktop.onMotionCommand(onMotionCommand);
+window.aronaDesktop.onPrepareQuit(() => {
+  if (exitWarpStarted) return;
+  exitWarpStarted = true;
+  ++motionRequestId;
+  bodyWarp.cancel();
+  void (async () => {
+    try {
+      // Exit is disappearance only. Do not wait 1s or reveal the body again.
+      if (motionWarpEnabled && bodyWarp.enabled && placeholder.hidden) {
+        await bodyWarp.conceal();
+      }
+    } catch (error) {
+      console.warn('[FRAME warp] exit concealment failed:', error);
+    } finally {
+      window.aronaDesktop.quitReady();
+    }
+  })();
+});
 window.aronaDesktop.onMotionWarpEnabled(enabled => {
   motionWarpEnabled = enabled !== false;
   if (!motionWarpEnabled) bodyWarp.cancel();
