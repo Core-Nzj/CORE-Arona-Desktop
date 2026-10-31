@@ -81,7 +81,7 @@ button:focus-visible { outline: 2px solid #2997ff; outline-offset: 2px; }
   -webkit-app-region: no-drag;
   transition: background-color .13s, color .13s;
 }
-.titlebar-close:hover { background: rgba(167,95,111,.52); color: #ffebf0; }
+.titlebar-close:hover { background: rgba(255,89,90,.14); color: #ff7777; }
 .titlebar-close:active { background: rgba(142,67,86,.67); color: #fff; }
 .heading { flex: none; padding: 16px 20px 15px; }
 .eyebrow { color: #86868b; font-size: calc(9px * var(--text-scale)); font-weight: 600; letter-spacing: .11em; }
