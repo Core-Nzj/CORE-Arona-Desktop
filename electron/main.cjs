@@ -4,6 +4,7 @@ const { app, BrowserWindow, clipboard, dialog, ipcMain, protocol, screen, safeSt
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { resolveAssetPath } = require('./asset-path.cjs');
+const { DEFAULT_FRAME_RATE, FRAME_RATE_OPTIONS, normalizeFrameRate, movementIntervalMs } = require('./frame-rate.cjs');
 const {
   stageInDisplay, cursorHitsStageRects, sanitizeHitRectangles, clampAvatarPosition,
   avatarMovementLimits, unboundedOverlayZoom, scaleAvatarHitRectangles
@@ -112,6 +113,7 @@ let motionIdleId = null;
 let motionLibraryMessage = '未検索';
 let motionWarpEnabled = true;
 let motionTransitionMode = 'auto';
+let renderFrameRate = DEFAULT_FRAME_RATE;
 const voiceClient = new VoiceProxyClient();
 let voiceEntries = [];
 let voiceError = '接続を確認していません';
@@ -353,7 +355,8 @@ function infoForCurrentModel() {
     name: path.basename(currentModelFile),
     url: SCHEME + '://model/' + encodeURIComponent(path.basename(currentModelFile)),
     motionWarpEnabled,
-    motionTransitionMode
+    motionTransitionMode,
+    renderFrameRate
   };
 }
 
@@ -375,6 +378,7 @@ async function restoreModelSelection() {
     if (typeof settings.motionSelectedId === 'string') motionSelectedId = settings.motionSelectedId;
     if (typeof settings.motionWarpEnabled === 'boolean') motionWarpEnabled = settings.motionWarpEnabled;
     if (['auto', 'blend', 'warp'].includes(settings.motionTransitionMode)) motionTransitionMode = settings.motionTransitionMode;
+    renderFrameRate = normalizeFrameRate(settings.renderFrameRate);
     if (typeof settings.modelPath !== 'string') return;
     if (!['.pmx', '.pmd'].includes(path.extname(settings.modelPath).toLowerCase())) return;
     const stats = await fs.stat(settings.modelPath);
@@ -397,7 +401,8 @@ async function saveModelSelection() {
     motionIdleId,
     motionSelectedId,
     motionWarpEnabled,
-    motionTransitionMode
+    motionTransitionMode,
+    renderFrameRate
   }, null, 2), 'utf8');
 }
 
@@ -603,7 +608,7 @@ function beginAvatarWalk(direction, speed) {
         (state.direction < 0 && state.x <= minimum)) {
       stopAvatarWalk(true); // Stop before the model would slide beyond the screen.
     }
-  }, 16);
+  }, movementIntervalMs(renderFrameRate));
 }
 
 function stopAvatarDrag() {
@@ -645,7 +650,7 @@ function startAvatarDrag() {
       avatarBounds = next;
       syncAvatarViewport(nearest);
     }
-  }, 16);
+  }, movementIntervalMs(renderFrameRate));
 }
 
 function zoomAvatarWindow(action) {
@@ -774,6 +779,7 @@ function menuState() {
     motionStatus: idleDiagnostics.split('\n')[0],
     motionWarpEnabled,
     motionTransitionMode,
+    renderFrameRate,
     motionLibrary: {
       directory: motionDirectory || '',
       entries: motionEntries,
