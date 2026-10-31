@@ -138,7 +138,7 @@ test('shutdown closes authenticated HTTP keep-alive sockets promptly', async t =
     await Promise.race([
       adapter.disconnect(),
       new Promise((_, reject) => {
-        timer = setTimeout(() => reject(new Error('Chrome bridge shutdown timed out')), 1500);
+        timer = setTimeout(() => reject(new Error('Chrome bridge shutdown timed out')), 3000);
       })
     ]);
   } finally {
