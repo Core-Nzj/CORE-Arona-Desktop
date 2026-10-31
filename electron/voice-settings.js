@@ -9,6 +9,11 @@ const connect = document.querySelector('#connect');
 const clear = document.querySelector('#clear');
 const browserFill = document.querySelector('#browser-fill');
 
+function setStatus(text, state = 'neutral') {
+  status.textContent = text;
+  status.dataset.state = state;
+}
+
 function display(info, message = '') {
   const proxy = info?.proxy || {};
   const lines = [];
@@ -22,7 +27,8 @@ function display(info, message = '') {
   lines.push('音声ライブラリ: ' + (info?.voice?.count ?? 0) + '件');
   if (info?.voice?.error) lines.push('VoiSona Talk: ' + info.voice.error);
   if (info?.error) lines.push('認証情報: ' + info.error);
-  status.textContent = lines.join('\n');
+  const failed = !!(proxy.error || info?.voice?.error || info?.error) || /失敗|できませんでした|接続できません/.test(message);
+  setStatus(lines.join('\n'), failed ? 'error' : proxy.running ? 'online' : 'neutral');
   if (info?.username) userInput.value = info.username;
   passwordInput.placeholder = info?.saved ? '変更しなければ空欄で維持' : 'API用パスワード';
   clear.disabled = !info?.saved;
@@ -31,7 +37,7 @@ function display(info, message = '') {
 
 async function refresh(message = '') {
   try { display(await window.voiceSettings.status(), message); }
-  catch (error) { status.textContent = String(error?.message || error); }
+  catch (error) { setStatus(String(error?.message || error), 'error'); }
 }
 
 function busy(pending) {
@@ -44,7 +50,7 @@ function busy(pending) {
 form.addEventListener('submit', async event => {
   event.preventDefault();
   busy(true);
-  status.textContent = '暗号化して保存し、接続を確認しています...';
+  setStatus('暗号化して保存し、接続を確認しています...', 'pending');
   try {
     await window.voiceSettings.save(userInput.value, passwordInput.value);
     passwordInput.value = '';
@@ -57,7 +63,7 @@ form.addEventListener('submit', async event => {
 
 connect.addEventListener('click', async () => {
   busy(true);
-  status.textContent = 'Proxyの起動・接続を確認しています...';
+  setStatus('Proxyの起動・接続を確認しています...', 'pending');
   try {
     const state = await window.voiceSettings.connect();
     await refresh(state?.running ? '接続できました。' : 'Proxyに接続できませんでした。');
@@ -80,7 +86,7 @@ clear.addEventListener('click', async () => {
 
 browserFill.addEventListener('click', async () => {
   busy(true);
-  status.textContent = 'ブラウザーに安全な一時入力フォームを開いています...';
+  setStatus('ブラウザーに安全な一時入力フォームを開いています...', 'pending');
   try {
     await window.voiceSettings.openBrowserAutofill();
     await refresh('ブラウザーでAPIパスワードを入力してください（フォームは3分間有効です）。');
