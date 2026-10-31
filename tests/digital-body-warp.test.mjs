@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { DigitalBodyWarp } from '../src/digital-body-warp.mjs';
+import { DigitalBodyWarp, shouldAnimateMotionWarp } from '../src/digital-body-warp.mjs';
 
 function makeWarp({ noOverlay = false, throwsOnCopy = false } = {}) {
   const context = {
@@ -97,4 +97,13 @@ test('GPU canvas copy failure falls back to fade without aborting transfer', asy
   warp.render(warp.since + warp.appearMs + 1);
   await appearing;
   assert.equal(source.style.opacity, '');
+});
+
+test('only displayed MMD avatars use warp; hidden placeholder must not invert guard', () => {
+  const ready = { animate: true, enabled: true, available: true };
+  assert.equal(shouldAnimateMotionWarp({ ...ready, placeholderHidden: true }), true);
+  assert.equal(shouldAnimateMotionWarp({ ...ready, placeholderHidden: false }), false);
+  assert.equal(shouldAnimateMotionWarp({ ...ready, placeholderHidden: true, enabled: false }), false);
+  assert.equal(shouldAnimateMotionWarp({ ...ready, placeholderHidden: true, animate: false }), false);
+  assert.equal(shouldAnimateMotionWarp({ ...ready, placeholderHidden: true, available: false }), false);
 });
