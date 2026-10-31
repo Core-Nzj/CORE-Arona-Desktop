@@ -42,6 +42,11 @@ function renderState(state) {
   const selected = entries.find(entry => entry.id === library.selectedId);
   const selectedIdle = entries.find(entry => entry.id === library.idleId);
   document.getElementById('motion-count').textContent = entries.length + '件';
+  for (const choice of document.querySelectorAll('.transition-choice')) {
+    const selected = choice.dataset.value === (state.motionTransitionMode || 'auto');
+    choice.classList.toggle('selected', selected);
+    choice.setAttribute('aria-pressed', String(selected));
+  }
   document.getElementById('motion-warp-toggle').textContent =
     'デジタル転送演出 ' + (state.motionWarpEnabled !== false ? 'ON' : 'OFF');
   document.getElementById('motion-warp-toggle').setAttribute(
@@ -167,7 +172,8 @@ const keepOpen = new Set([
   'voice.refresh', 'voice.select', 'emotion.select',
   'voice.autoStart', 'voice.autoHide', 'voice.appHide',
   'motion.folder', 'motion.refresh', 'motion.preview', 'motion.next',
-  'motion.previous', 'motion.setIdle', 'motion.stop', 'motion.resetIdle', 'motion.warpToggle'
+  'motion.previous', 'motion.setIdle', 'motion.stop', 'motion.resetIdle', 'motion.warpToggle',
+  'motion.transition'
 ]);
 async function runAction(action, value) {
   if (busy) return;
