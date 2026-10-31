@@ -101,7 +101,7 @@ test('save accepts only bounded PNGs and persists local JSON/gallery/latest file
   assert.equal(manifest.captureProfile.cameraRadius, 4.5);
   assert.equal(manifest.captureProfile.framingZoom, 2.4);
   assert.equal(manifest.captureProfile.imageMaxHeight, 1440);
-  assert.ok(manifest.captureProfile.groundReference.includes('initial'));
+  assert.ok(manifest.captureProfile.groundReference.includes('silhouette'));
   assert.ok((await fs.readFile(path.join(dest,'REVIEW_GUIDE.md'),'utf8')).includes('VISUAL BASELINE'));
   assert.ok((await fs.readFile(path.join(dest,'index.html'),'utf8')).includes('sheet-left-front.png'));
   assert.ok((await fs.readFile(path.join(root,'latest.html'),'utf8')).includes('index.html'));
