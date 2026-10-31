@@ -3,7 +3,7 @@
 - ステータス: **採用（Accepted）**
 - 決定日: 2026-10-31
 - 対象: 研究所専用のFRAME視覚プラグインとChatGPT等の外部受信先を接続する境界
-- 実装状況: **第1・第2工程実装済み、第3工程のChromeローカル受信試作を追加**。ChatGPTへの画像添付・送信は未実装で、実機受信テストも未実施。
+- 実装状況: **第1・第2工程実装済み、第3工程はChrome受信まで実機確認済み、第4工程のChatGPT入力添付試作を追加**。ChatGPTへの添付成功はまだ実機未確認。自動送信は実装しない。
 - 関連: [ADR-0002](0002-frame-core-plugin-architecture.md)、[視覚プラグイン試作](../plugins.md)、[Issue #4](https://github.com/Core-Nzj/CORE-Arona-Desktop/issues/4)
 
 ## 決定
@@ -127,3 +127,13 @@
 ### 明確な制約
 
 受領成功は「Chrome拡張へのHTTP応答が完了した」という意味で、ChatGPTが画像を受け取ったことではない。許可なくChromeやChatGPTに画像を自動送信しない。プラグインの非公開PowerShellスクリプトはGitHubには追加しない。
+
+## 第4工程: ChatGPT通常Chatへの添付試行（2026-10-31）
+
+- FRAME→Chrome拡張までは先生のWindows実機でPNG受信とプレビュー表示に成功した。第4工程はChrome拡張からChatGPTの**入力欄に画像を添付する**実験で、ChatGPT側の実機確認は未実施。
+- `experiments/vision-chrome-receiver/manifest.json`: `activeTab`＋`scripting` だけ追加。全サイトの自動読み取り権限、常駐コンテンツスクリプト、ChatGPTドメインの恒久的な権限は使用しない。ローカル受信先の権限は従来どおり。
+- `chatgpt-attach.js`: 添付先を `https://chatgpt.com` に限定。先生が選択した通常会話の入力欄に対し、メモリ上で生成したPNGの `File` と `DataTransfer` を使い、既存のファイル入力の `change` を優先して試す。入力が見つからない場合だけドロップ操作を試す。メッセージ送信は一切行わない。
+- `popup.js/html/css`: 受信画像を拡張内RAMに一時保持し、受信後に追加の送信先・画像確認チェックを要求する。「ChatGPTの入力欄へ添付」ボタンがクリックされたときに限り、アクティブなChatGPTタブへ一度スクリプトを挿入する。画像はOSのクリップボードにもファイルにも置かない。拡張の小窓を閉じる・「画像を消去」で拡張側の一時参照を破棄する。Chrome MV3のCSPに合わせて外部CSSファイルへ分離。
+- `tests/vision-chatgpt-attach.test.cjs`: 注入先ドメイン・通常会話入力の存在・PNG検証・ファイル入力イベント・ドロップ代替・ユーザー同意と権限の最低限の契約をテスト。
+- 注意: `input.files` の更新や合成ドロップイベントは、ChatGPTの画面実装により無視される可能性がある。技術的にイベントを発行できても「ChatGPTが画像を受け付けた」ことの保証にはならない。**画像サムネイルがChatGPT入力欄に現れたかを先生が確認する。**
+- 注意: 添付操作の時点でChatGPT側への画像アップロードが開始される可能性がある。チェックにはその旨を明記する。送信ボタンの自動操作や、隠れた非公開APIへの直接リクエストは行わない。
