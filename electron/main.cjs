@@ -6,6 +6,8 @@ const path = require('node:path');
 const { resolveAssetPath } = require('./asset-path.cjs');
 const { motionLabRoot, beginMotionLab, writeMotionLabImage, completeMotionLab } =
   require('./motion-lab.cjs');
+const { requestDirectory, resultName, validateRequest, REQUEST_NAME } =
+  require('./motion-lab-control.cjs');
 const { DEFAULT_FRAME_RATE, FRAME_RATE_OPTIONS, normalizeFrameRate, movementIntervalMs } = require('./frame-rate.cjs');
 const {
   stageInDisplay, cursorHitsStageRects, sanitizeHitRectangles, clampAvatarPosition,
@@ -111,6 +113,9 @@ let idleDiagnostics = 'モーションの読み込みを待っています';
 let motionLabSession = null;
 let motionLabTimeout = null;
 let motionLabStatus = '未撮影';
+let avatarMotionLabReady = false;
+let motionLabRequestTimer = null;
+let motionLabRequestPolling = false;
 function motionLabFolder() {
   return motionLabRoot(app.getAppPath(), app.getPath('userData'), app.isPackaged);
 }
@@ -124,6 +129,67 @@ function clearMotionLabSession() {
   if (motionLabTimeout) clearTimeout(motionLabTimeout);
   motionLabTimeout = null;
   motionLabSession = null;
+}
+
+// Development-only filesystem handshake. Agents write an ignored request file
+// rather than trying to click through transparent/topmost Windows overlays.
+async function respondToMotionLabRequest(session, result) {
+  if (!session?.externalRequestId) return;
+  const output = path.join(requestDirectory(motionLabFolder()),
+    resultName(session.externalRequestId));
+  await fs.writeFile(output, JSON.stringify({
+    id: session.externalRequestId, completedAt: new Date().toISOString(),
+    ...result
+  }, null, 2), { flag: 'wx' });
+}
+
+async function pollMotionLabRequests() {
+  if (app.isPackaged || !avatarMotionLabReady || motionLabSession ||
+      motionLabRequestPolling || !mainWindow || mainWindow.isDestroyed() ||
+      exitWarpPending) return;
+  motionLabRequestPolling = true;
+  try {
+    const folder = requestDirectory(motionLabFolder());
+    let entries;
+    try { entries = await fs.readdir(folder); }
+    catch (error) {
+      if (error.code === 'ENOENT') return;
+      throw error;
+    }
+    const name = entries.sort().find(value => REQUEST_NAME.test(value));
+    if (!name) return;
+    const id = REQUEST_NAME.exec(name)[1];
+    const filename = path.join(folder, name);
+    // The request file is strictly local to a development checkout. Never
+    // open arbitrary paths or execute incoming command strings.
+    let request;
+    try {
+      const stat = await fs.stat(filename);
+      if (stat.size > 2048) throw new Error('Request too large');
+      request = JSON.parse(await fs.readFile(filename, 'utf8'));
+    } catch { request = null; }
+    await fs.unlink(filename);
+    if (!validateRequest(name, request)) {
+      await fs.writeFile(path.join(folder, resultName(id)), JSON.stringify({
+        id, ok: false, message: 'Invalid or expired motion lab request'
+      }), { flag: 'wx' });
+      return;
+    }
+    try {
+      await executeMenuAction('diagnostic.motionCapture');
+      if (!motionLabSession) throw new Error('Motion lab session was not started');
+      motionLabSession.externalRequestId = id;
+      console.info('[FRAME motion lab] local developer request accepted:', id);
+    } catch (error) {
+      await fs.writeFile(path.join(folder, resultName(id)), JSON.stringify({
+        id, ok: false, message: String(error?.message ?? error).slice(0, 250)
+      }), { flag: 'wx' });
+    }
+  } catch (error) {
+    console.warn('[FRAME motion lab] request handling failed:', error);
+  } finally {
+    motionLabRequestPolling = false;
+  }
 }
 
 let motionDirectory = null;
@@ -470,6 +536,7 @@ async function chooseModel() {
   });
   if (result.canceled || result.filePaths.length === 0) return null;
   currentModelFile = result.filePaths[0];
+  avatarMotionLabReady = false;
   resetEmotionState();
   await saveModelSelection();
   return infoForCurrentModel();
@@ -979,6 +1046,9 @@ async function executeMenuAction(action, value) {
         if (motionLabSession !== session) return;
         clearMotionLabSession();
         updateMotionLabStatus('撮影がタイムアウトしました（部分画像は保存済み）');
+        void respondToMotionLabRequest(session, {
+          ok: false, message: 'Motion Lab capture timed out'
+        }).catch(error => console.warn('[FRAME motion lab] unable to report timeout:', error));
       }, 120000);
       mainWindow.webContents.send('avatar:motion-lab-start', { id: session.id });
       return '歩行の撮影を開始しました。完了すると保存先を開きます';
@@ -1312,6 +1382,7 @@ app.whenReady().then(async () => {
     clearMotionLabSession();
     if (outcome?.error) {
       updateMotionLabStatus('撮影失敗: ' + String(outcome.error).slice(0, 180));
+      await respondToMotionLabRequest(session, { ok: false, message: motionLabStatus });
       return { ok: false, message: motionLabStatus };
     }
     try {
@@ -1321,13 +1392,23 @@ app.whenReady().then(async () => {
       });
       updateMotionLabStatus('保存完了: ' + directory);
       console.info('[FRAME motion lab] saved:', directory);
-      const openError = await shell.openPath(directory);
-      if (openError) console.warn('[FRAME motion lab] cannot open output:', openError);
+      await respondToMotionLabRequest(session, { ok: true, directory });
+      // Terminal/AI-triggered captures should not steal desktop focus by
+      // opening Explorer. The console prints the resulting gallery path.
+      if (!session.externalRequestId) {
+        const openError = await shell.openPath(directory);
+        if (openError) console.warn('[FRAME motion lab] cannot open output:', openError);
+      }
       return { ok: true, directory };
     } catch (error) {
       updateMotionLabStatus('保存失敗: ' + String(error?.message ?? error).slice(0, 180));
+      try { await respondToMotionLabRequest(session, { ok: false, message: motionLabStatus }); }
+      catch (reportError) { console.warn('[FRAME motion lab] unable to report failure:', reportError); }
       return { ok: false, message: motionLabStatus };
     }
+  });
+  ipcMain.on('avatar:motion-lab-ready', event => {
+    if (isOurWindow(event)) avatarMotionLabReady = true;
   });
   ipcMain.handle('avatar:motion-restore', async event => {
     if (!isOurWindow(event) || !motionIdleId || !motionDirectory) return null;
@@ -1543,6 +1624,11 @@ app.whenReady().then(async () => {
     console.warn('[CORE Voice] encrypted settings cannot be restored:', error?.message);
   }
   createWindow();
+  // No HTTP service, external command execution or screen-capture permission.
+  // The ignored request file is consumed only by a running development FRAME.
+  if (!app.isPackaged) {
+    motionLabRequestTimer = setInterval(() => { void pollMotionLabRequests(); }, 700);
+  }
   const onDisplayLayoutChange = () => {
     if (!avatarBounds || !mainWindow || mainWindow.isDestroyed()) return;
     const center = {
@@ -1616,6 +1702,8 @@ app.on('before-quit', event => {
     return;
   }
   clearMotionLabSession();
+  if (motionLabRequestTimer) clearInterval(motionLabRequestTimer);
+  motionLabRequestTimer = null;
   closeAvatarMenu(true);
   browserCredentialPortal?.close();
   speechBridge?.close();
