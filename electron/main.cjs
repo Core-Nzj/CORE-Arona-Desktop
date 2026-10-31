@@ -1119,6 +1119,61 @@ async function executeMenuAction(action, value) {
       await visionBroker.deliver(request.requestId);
       return 'FRAME内部の検証先が画像を1回受領しました（ChatGPTには未送信）';
     }
+    case 'vision.beginBrowser': {
+      if (!menuWindow || menuWindow.isDestroyed() || !menuWindow.isVisible() || menuClosing) {
+        throw new Error('設定画面が開いている間だけ受け渡しできます');
+      }
+      if (value !== 'confirm-browser-handoff') {
+        throw new Error('ブラウザ受け渡しには画像と送信先の確認が必要です');
+      }
+      const local = visionBroker.getState();
+      const preview = pluginHost?.state().capture;
+      if (local?.status !== 'captured' || !preview ||
+          Date.now() >= local.expiresAt) {
+        throw new Error('新しい画像を撮影してから受け渡しを許可してください');
+      }
+      if (visionBrowserBroker.getState()?.status === 'delivering') {
+        throw new Error('前のブラウザ受信処理が完了していません');
+      }
+      const bytes = Buffer.from(preview.dataUrl.slice('data:image/png;base64,'.length), 'base64');
+      try {
+        await visionBrowserAdapter.start();
+        const pending = visionBrowserBroker.begin({
+          source: 'frame.menu', target: local.target,
+          destinationId: BROWSER_DESTINATION_ID
+        });
+        visionBrowserBroker.capture(pending.requestId, bytes);
+        visionBrowserBroker.approve({
+          requestId: pending.requestId, destinationId: BROWSER_DESTINATION_ID,
+          userConfirmed: true
+        });
+        visionBroker.revoke();
+        void visionBrowserBroker.deliver(pending.requestId).catch(() => {}).finally(() => {
+          if (menuWindow && !menuWindow.isDestroyed() && !menuClosing) {
+            menuWindow.webContents.send('avatar-menu:state-update', menuState());
+          }
+        });
+        await new Promise(resolve => setImmediate(resolve));
+        if (!visionBrowserAdapter.getPending()) throw new Error('受信待機を開始できませんでした');
+        return 'Chrome拡張の受信待機を開始しました（60秒以内、一回限り）';
+      } catch (error) {
+        visionBrowserBroker.revoke();
+        throw error;
+      } finally {
+        bytes.fill(0);
+      }
+    }
+    case 'vision.copyBrowserToken': {
+      const pending = visionBrowserAdapter.getPending();
+      if (!pending || visionBrowserBroker.getState()?.status !== 'delivering') {
+        throw new Error('有効なChrome受信コードはありません');
+      }
+      clipboard.writeText(pending.token);
+      return '受信コードをコピーしました（画像はコピーされません）';
+    }
+    case 'vision.cancelBrowser':
+      visionBrowserBroker.revoke();
+      return 'Chrome受信待機を取り消しました';
     case 'voice.settings':
       openVoiceSettings();
       return '接続設定を開きました';
