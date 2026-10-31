@@ -112,9 +112,17 @@ h1 { margin: 5px 0 3px; color: #f5f5f7; font-size: 23px; font-weight: 650; line-
 .plugin-card .row { min-height: 32px; padding: 7px 6px; justify-content: center; font-size: 10px; }
 .window-list { max-height: 210px; overflow-y: auto; scrollbar-color: #55555a transparent; scrollbar-width: thin; }
 .plugin-window-item { display: flex; gap: 9px; justify-content: space-between; align-items: flex-start;
+  width: 100%; cursor: pointer; text-align: left; font: inherit; color: #f5f5f7;
   background: #29292c; border: 1px solid var(--border); border-radius: 9px; padding: 8px 10px; }
+.plugin-window-item:hover { background: #38383c; }
+.plugin-window-item.selected { border-color: #2997ff; background: #25354a; }
 .plugin-window-item span { min-width: 0; overflow-wrap: anywhere; font-size: 11px; }
 .plugin-window-item small { color: #86868b; flex: none; font-size: 9px; }
+.plugin-preview { margin-top: 12px; padding: 10px; border: 1px solid var(--border);
+  border-radius: 11px; background: #222225; }
+.plugin-preview img { display: block; width: 100%; max-height: 260px; object-fit: contain;
+  background: #0e0e0e; border-radius: 7px; }
+.plugin-preview .hint { overflow-wrap: anywhere; }
 .motion-folder {
   overflow: hidden;
   white-space: nowrap;
