@@ -39,7 +39,7 @@ async function scanMotionLibrary(directory) {
 
 async function readMotionFile(rootDirectory, id) {
   if (typeof id !== 'string' || id.length < 1 || id.length > 1024 ||
-      id.includes('\\') || id.includes('\\0') || id.startsWith('/') ||
+      id.includes('\\') || id.includes(String.fromCharCode(0)) || id.startsWith('/') ||
       id.split('/').some(part => !part || part === '.' || part === '..') ||
       path.posix.extname(id).toLowerCase() !== '.vmd') {
     throw new Error('不正なモーション識別子です');
