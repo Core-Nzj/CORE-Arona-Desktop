@@ -5,7 +5,8 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const { resolveAssetPath } = require('./asset-path.cjs');
 const {
-  stageInDisplay, cursorHitsStageRects, sanitizeHitRectangles, clampAvatarPosition
+  stageInDisplay, cursorHitsStageRects, sanitizeHitRectangles, clampAvatarPosition,
+  avatarMovementLimits, unboundedOverlayZoom, scaleAvatarHitRectangles
 } = require('./avatar-overlay.cjs');
 const { scanMotionLibrary, readMotionFile } = require('./motion-library.cjs');
 const {
@@ -583,9 +584,12 @@ function beginAvatarWalk(direction, speed) {
       return;
     }
     const bounds = avatarBounds;
-    const area = avatarDisplay().workArea;
-    const minimum = area.x;
-    const maximum = Math.max(minimum, area.x + area.width - bounds.width);
+    // Use model silhouette rather than stage edges. Permit most of the body
+    // to exit the monitor, but stop with a grab-able section remaining.
+    const area = avatarDisplay().bounds;
+    const limits = avatarMovementLimits(bounds, area, avatarHitRects);
+    const minimum = limits.minX;
+    const maximum = limits.maxX;
     const now = performance.now();
     const dt = Math.max(0, Math.min(0.1, (now - state.last) / 1000));
     state.last = now;
@@ -636,7 +640,7 @@ function startAvatarDrag() {
     const x = Math.round(dragStart.position[0] + pointer.x - dragStart.pointer.x);
     const y = Math.round(dragStart.position[1] + pointer.y - dragStart.pointer.y);
     const nearest = screen.getDisplayNearestPoint(pointer);
-    const next = clampAvatarPosition({ ...avatarBounds, x, y }, nearest.workArea);
+    const next = clampAvatarPosition({ ...avatarBounds, x, y }, nearest.bounds, avatarHitRects);
     if (next.x !== avatarBounds.x || next.y !== avatarBounds.y) {
       avatarBounds = next;
       syncAvatarViewport(nearest);
@@ -657,15 +661,17 @@ function zoomAvatarWindow(action) {
   const requestedScale = action === 'reset'
     ? startupScaleForArea(workArea)
     : avatarScale * Math.pow(ZOOM_IN_FACTOR, steps);
-  // Center-based anchoring avoids the cursor/window oscillation on resize.
-  const { bounds, scale, cameraZoom } =
-    boundsForScale(currentBounds, workArea, requestedScale);
+  // Keep the model center stationary, without the old physical-window clamp.
+  const result = unboundedOverlayZoom(currentBounds,
+    boundsForScale(currentBounds, workArea, requestedScale));
+  const { bounds, scale, cameraZoom } = result;
   avatarScale = scale;
   if (bounds.x !== currentBounds.x || bounds.y !== currentBounds.y ||
       bounds.width !== currentBounds.width || bounds.height !== currentBounds.height) {
     stopAvatarDrag();
-    avatarBounds = bounds;
-    avatarHitRects = []; // Recompute silhouette at the new rendered resolution.
+    const scaledMask = scaleAvatarHitRectangles(avatarHitRects, currentBounds, bounds);
+    avatarBounds = clampAvatarPosition(bounds, avatarDisplay().bounds, scaledMask);
+    avatarHitRects = scaledMask; // Keep wheel zoom responsive until next alpha readback.
     syncAvatarViewport();
   }
   mainWindow.webContents.send('avatar:camera-zoom', cameraZoom);
@@ -1448,7 +1454,7 @@ app.whenReady().then(async () => {
       y: avatarBounds.y + avatarBounds.height / 2
     };
     const target = screen.getDisplayNearestPoint(center);
-    avatarBounds = clampAvatarPosition(avatarBounds, target.workArea);
+    avatarBounds = clampAvatarPosition(avatarBounds, target.bounds, avatarHitRects);
     avatarDisplayId = null; // Force a new full-monitor overlay bound.
     syncAvatarViewport(target);
   };
