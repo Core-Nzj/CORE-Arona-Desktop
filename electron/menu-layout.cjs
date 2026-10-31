@@ -2,8 +2,9 @@
 
 // Geometry for FRAME's transparent, frameless menu. Pure functions are kept
 // independent of Electron so edge constraints can be tested with node --test.
-const DEFAULT_WIDTH = 376;
-const DEFAULT_HEIGHT = 566;
+const DEFAULT_WIDTH = 560;
+const DEFAULT_HEIGHT = 760;
+const LAYOUT_VERSION = 2; // v1 used 376 x 566, before the extra motion/voice controls.
 const MIN_WIDTH = 300;
 const MIN_HEIGHT = 320;
 const WINDOW_MARGIN = 12;
@@ -31,6 +32,20 @@ function normalizeMenuLayout(value, workArea) {
   };
 }
 
+// Upgrade previously saved small panels once, but preserve intentional
+// window resizes after version 2 has been written to disk.
+function restoreMenuLayout(value, workArea) {
+  if (value && typeof value === 'object' && value.version === LAYOUT_VERSION) {
+    return normalizeMenuLayout(value, workArea);
+  }
+  const old = value && typeof value === 'object' ? value : {};
+  return normalizeMenuLayout({
+    ...old,
+    width: Math.max(DEFAULT_WIDTH, Number.isFinite(old.width) ? old.width : 0),
+    height: Math.max(DEFAULT_HEIGHT, Number.isFinite(old.height) ? old.height : 0)
+  }, workArea);
+}
+
 function changeMenuZoom(current, direction) {
   if (direction === 'reset') return 1;
   if (direction !== 'in' && direction !== 'out') return nearestZoom(current);
@@ -56,6 +71,6 @@ function resizeMenuBounds(bounds, origin, pointer, edge, workArea) {
 }
 
 module.exports = {
-  DEFAULT_WIDTH, DEFAULT_HEIGHT, MIN_WIDTH, MIN_HEIGHT,
-  EDGES, normalizeMenuLayout, changeMenuZoom, resizeMenuBounds
+  DEFAULT_WIDTH, DEFAULT_HEIGHT, MIN_WIDTH, MIN_HEIGHT, LAYOUT_VERSION,
+  EDGES, normalizeMenuLayout, restoreMenuLayout, changeMenuZoom, resizeMenuBounds
 };
