@@ -52,6 +52,17 @@ protocol.registerSchemesAsPrivileged([{
 }]);
 
 let mainWindow;
+let exitWarpPending = false;
+let exitWarpComplete = false;
+let exitWarpTimeout = null;
+function completeExitWarp() {
+  if (exitWarpComplete) return;
+  exitWarpComplete = true;
+  exitWarpPending = false;
+  if (exitWarpTimeout) clearTimeout(exitWarpTimeout);
+  exitWarpTimeout = null;
+  app.quit(); // Continue with the existing VoiSona cleanup and window teardown.
+}
 let avatarScale = INITIAL_SCALE;
 let settingsWindow = null;
 let menuWindow = null;
@@ -983,6 +994,14 @@ function createWindow() {
     const { cameraZoom } = boundsForScale(mainWindow.getBounds(), area, avatarScale);
     mainWindow.webContents.send('avatar:camera-zoom', cameraZoom);
   });
+  mainWindow.on('close', event => {
+    // Closing the frame directly (taskbar/OS) must use the same animation as
+    // the in-app Exit button. An app.quit() call can be cancelled before close.
+    if (!exitWarpComplete) {
+      event.preventDefault();
+      app.quit();
+    }
+  });
   mainWindow.on('closed', () => {
     closeAvatarMenu();
     stopAvatarDrag();
@@ -1152,6 +1171,9 @@ app.whenReady().then(async () => {
   ipcMain.on('avatar:quit', event => {
     if (mainWindow && event.sender === mainWindow.webContents) app.quit();
   });
+  ipcMain.on('avatar:quit-ready', event => {
+    if (isOurWindow(event) && exitWarpPending) completeExitWarp();
+  });
 
   credentialStore = new VoiceCredentialStore({
     safeStorage, userDataPath: app.getPath('userData')
@@ -1205,6 +1227,24 @@ app.whenReady().then(async () => {
 let voiceShutdownPending = false;
 let voiceShutdownComplete = false;
 app.on('before-quit', event => {
+  if (!exitWarpComplete) {
+    if (mainWindow && !mainWindow.isDestroyed() &&
+        !mainWindow.webContents.isLoadingMainFrame()) {
+      event.preventDefault();
+      if (exitWarpPending) return;
+      exitWarpPending = true;
+      closeAvatarMenu(); // The popup must not cover the disappearing avatar.
+      mainWindow.webContents.send('avatar:prepare-quit');
+      // The 260ms exit transfer cannot block quitting if rendering stalls.
+      exitWarpTimeout = setTimeout(() => {
+        console.warn('[FRAME warp] exit animation timed out; closing safely');
+        completeExitWarp();
+      }, 2500);
+      return;
+    }
+    // Early boot failure or no remaining avatar window: quit immediately.
+    exitWarpComplete = true;
+  }
   if (!voiceShutdownComplete) {
     event.preventDefault();
     if (voiceShutdownPending) return;
