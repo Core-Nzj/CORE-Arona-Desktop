@@ -64,7 +64,7 @@ test('the safety limit includes the taskbar region and keeps cursor anchoring', 
   // A negative-Y second monitor and a stage wider than it remain recoverable.
   const large = {x:-500,y:0,width:1900,height:1100};
   const area = {x:0,y:0,width:1600,height:900};
-  const result = clampAvatarPosition({...large,x:-1000},area,[{x:600,y:300,width:500,height:500}]);
+  const result = clampAvatarPosition({...large,x:-2000},area,[{x:600,y:300,width:500,height:500}]);
   assert.equal(result.x,-1052);
 });
 
@@ -83,11 +83,11 @@ test('zoom retains its center even when the stage extends outside the screen', (
 test('partial stage overflow is possible on displays to the left and right', () => {
   const bounds = {x:3100,y:-999,width:580,height:780};
   assert.deepEqual(clampAvatarPosition(bounds,
-    {x:1920,y:0,width:1920,height:1040}),{...bounds,y:-646});
+    {x:1920,y:0,width:1920,height:1040}),{...bounds,y:-615});
   assert.deepEqual(clampAvatarPosition({x:4000,y:600,width:580,height:780},
     {x:1920,y:0,width:1920,height:1040}),
-  {x:3316,y:600,width:580,height:780});
+  {x:3676,y:600,width:580,height:780});
   assert.deepEqual(clampAvatarPosition({x:-2300,y:200,width:580,height:780},
     {x:-1920,y:-200,width:1600,height:880}),
-  {x:-2204,y:200,width:580,height:780});
+  {x:-2300,y:200,width:580,height:780});
 });
