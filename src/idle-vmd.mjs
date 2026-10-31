@@ -12,7 +12,15 @@ const SHIFT_JIS = Object.freeze({
   '上半身2': '8fe394bc906732',
   '首': '8ef1',
   '頭': '93aa',
-  'まばたき': '82dc82ce82bd82ab'
+  'まばたき': '82dc82ce82bd82ab',
+  '左足ＩＫ': '8db691ab8268826a',
+  '右足ＩＫ': '894591ab8268826a',
+  '左足': '8db691ab',
+  '右足': '894591ab',
+  '左ひざ': '8db682d082b4',
+  '右ひざ': '894582d082b4',
+  '下半身': '89ba94bc9067',
+  'グルーブ': '834f838b815b8375'
 });
 export const IDLE_FRAMES = 360; // 12 seconds at the MMD standard 30 fps
 export const IDLE_ARM_ANGLE_DEGREES = 50; // Conservative angle for varied A/T-pose rigs
@@ -120,6 +128,12 @@ export function buildIdleVmd({ boneNames = [], morphNames = [] } = {}) {
   const blinkName = ['まばたき', 'blink', 'Blink'].find(name => morphs.has(name));
   if (blinkName) morphFrames.push(...blinkFrames(blinkName));
 
+  return encodeGeneratedVmd(boneFrames, morphFrames);
+}
+
+// Shared VMD writer for local, original procedural animations. It never
+// reads or distributes user-supplied motion data.
+export function encodeGeneratedVmd(boneFrames, morphFrames = [], label = 'CORE Idle') {
   // The last four counts are camera, lighting, self-shadow and IK/property.
   const totalBytes = 50 + 4 + boneFrames.length * 111
     + 4 + morphFrames.length * 23 + 16;
@@ -145,7 +159,7 @@ export function buildIdleVmd({ boneNames = [], morphNames = [] } = {}) {
   }
 
   fixedAscii('Vocaloid Motion Data 0002', 30);
-  fixedAscii('CORE Idle', 20);
+  fixedAscii(label, 20);
   u32(boneFrames.length);
   for (const { name, frame, rotation, position } of boneFrames) {
     bytes(encodeName(name, 15));
