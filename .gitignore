@@ -19,3 +19,5 @@ assets/private/
 # VoiSona generated audio and cache
 voisona_talk_cache/
 *.wav
+# Local motion review frames, galleries and potentially licensed avatar appearance
+motion-lab/
