@@ -123,6 +123,33 @@ h1 { margin: 5px 0 3px; color: #f5f5f7; font-size: 23px; font-weight: 650; line-
 .plugin-preview img { display: block; width: 100%; max-height: 260px; object-fit: contain;
   background: #0e0e0e; border-radius: 7px; }
 .plugin-preview .hint { overflow-wrap: anywhere; }
+
+.capture-toolbar { display: grid; grid-template-columns: 1.5fr 1fr 1fr; gap: 6px; }
+.capture-toolbar.gap-small { margin: 8px 0; }
+.capture-toolbar .row { min-width: 0; justify-content: center; text-align: center;
+  min-height: 36px; padding: 7px 5px; font-size: 10px; }
+.plugin-error { max-height: 230px; overflow: auto; margin: 9px 0; padding: 10px 11px;
+  color: #ffb4b4; background: #351f23; border: 1px solid rgba(255,119,119,.32);
+  border-radius: 10px; white-space: pre-wrap; overflow-wrap: anywhere;
+  font-family: Consolas, "Yu Gothic UI", monospace; font-size: 10px; line-height: 1.6; }
+.plugin-error[hidden] { display: none; }
+.plugin-preview-expand { justify-content: center; margin-top: 8px; min-height: 32px; font-size: 10px; }
+.plugin-lightbox { position: fixed; inset: 0; z-index: 200; app-region: no-drag;
+  -webkit-app-region: no-drag; }
+.plugin-lightbox[hidden] { display: none; }
+.plugin-lightbox-backdrop { position: absolute; inset: 0; width: 100%; height: 100%;
+  padding: 0; border: none; background: rgba(0,0,0,.78); cursor: default; }
+.plugin-lightbox-panel { position: absolute; inset: 18px 12px; display: flex; flex-direction: column;
+  gap: 10px; min-height: 0; padding: 12px; background: #1d1d1f;
+  border: 1px solid rgba(255,255,255,.2); border-radius: 14px;
+  box-shadow: 0 12px 40px rgba(0,0,0,.5); }
+.plugin-lightbox-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.plugin-lightbox-toolbar strong { min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; font-size: 11px; font-weight: 600; }
+.plugin-lightbox-toolbar .row { width: auto; min-height: 30px; padding: 6px 12px; flex: none; }
+.plugin-lightbox-panel img { display: block; width: 100%; min-height: 0; flex: 1;
+  object-fit: contain; background: #0e0e0e; border-radius: 8px; }
+
 .motion-folder {
   overflow: hidden;
   white-space: nowrap;
