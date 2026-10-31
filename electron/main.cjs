@@ -4,6 +4,8 @@ const { app, BrowserWindow, clipboard, dialog, ipcMain, protocol, screen, safeSt
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { resolveAssetPath } = require('./asset-path.cjs');
+const { motionLabRoot, beginMotionLab, writeMotionLabImage, completeMotionLab } =
+  require('./motion-lab.cjs');
 const { DEFAULT_FRAME_RATE, FRAME_RATE_OPTIONS, normalizeFrameRate, movementIntervalMs } = require('./frame-rate.cjs');
 const {
   stageInDisplay, cursorHitsStageRects, sanitizeHitRectangles, clampAvatarPosition,
@@ -106,6 +108,24 @@ let dragStart = null;
 let walkTimer = null;
 let walkState = null;
 let idleDiagnostics = 'モーションの読み込みを待っています';
+let motionLabSession = null;
+let motionLabTimeout = null;
+let motionLabStatus = '未撮影';
+function motionLabFolder() {
+  return motionLabRoot(app.getAppPath(), app.getPath('userData'), app.isPackaged);
+}
+function updateMotionLabStatus(value) {
+  motionLabStatus = String(value).slice(0, 300);
+  if (menuWindow && !menuWindow.isDestroyed()) {
+    menuWindow.webContents.send('avatar-menu:state-update', menuState());
+  }
+}
+function clearMotionLabSession() {
+  if (motionLabTimeout) clearTimeout(motionLabTimeout);
+  motionLabTimeout = null;
+  motionLabSession = null;
+}
+
 let motionDirectory = null;
 let motionEntries = [];
 let motionSelectedId = null;
@@ -777,6 +797,7 @@ function menuState() {
     textSize: menuTextSize,
     viewState: menuViewState,
     motionStatus: idleDiagnostics.split('\n')[0],
+    motionLabStatus,
     motionWarpEnabled,
     motionTransitionMode,
     renderFrameRate,
@@ -944,7 +965,31 @@ function isMenuWindow(event) {
 
 async function executeMenuAction(action, value) {
   if (!mainWindow || mainWindow.isDestroyed()) throw new Error('モデル画面がありません');
+  if (motionLabSession && (action === 'model.change' || action.startsWith('motion.'))) {
+    throw new Error('歩行撮影が終わってから操作してください');
+  }
   switch (action) {
+    case 'diagnostic.motionCapture': {
+      if (!currentModelFile) throw new Error('先にMMDモデルを読み込んでください');
+      if (motionLabSession) throw new Error('歩行撮影はすでに実行中です');
+      const session = await beginMotionLab(motionLabFolder());
+      motionLabSession = session;
+      updateMotionLabStatus('歩行撮影中: 左右 × 3視点 × 9姿勢');
+      motionLabTimeout = setTimeout(() => {
+        if (motionLabSession !== session) return;
+        clearMotionLabSession();
+        updateMotionLabStatus('撮影がタイムアウトしました（部分画像は保存済み）');
+      }, 120000);
+      mainWindow.webContents.send('avatar:motion-lab-start', { id: session.id });
+      return '歩行の撮影を開始しました。完了すると保存先を開きます';
+    }
+    case 'diagnostic.motionFolder': {
+      const folder = motionLabFolder();
+      await fs.mkdir(folder, { recursive: true });
+      const error = await shell.openPath(folder);
+      if (error) throw new Error('撮影フォルダを開けません: ' + error);
+      return '撮影フォルダを開きました';
+    }
     case 'model.change': {
       const model = await chooseModel();
       if (model && mainWindow && !mainWindow.isDestroyed()) {
@@ -1253,6 +1298,37 @@ app.whenReady().then(async () => {
     return stageInDisplay(avatarBounds, avatarDisplay().bounds);
   });
   ipcMain.handle('avatar:current', () => infoForCurrentModel());
+  ipcMain.handle('avatar:motion-lab:save', async (event, id, filename, png, info) => {
+    if (!isOurWindow(event) || !motionLabSession || motionLabSession.id !== id) {
+      throw new Error('Invalid motion capture session');
+    }
+    return writeMotionLabImage(motionLabSession, filename, png, info);
+  });
+  ipcMain.handle('avatar:motion-lab:finish', async (event, id, outcome) => {
+    if (!isOurWindow(event) || !motionLabSession || motionLabSession.id !== id) {
+      throw new Error('Invalid motion capture session');
+    }
+    const session = motionLabSession;
+    clearMotionLabSession();
+    if (outcome?.error) {
+      updateMotionLabStatus('撮影失敗: ' + String(outcome.error).slice(0, 180));
+      return { ok: false, message: motionLabStatus };
+    }
+    try {
+      const directory = await completeMotionLab(session, {
+        ...(outcome?.meta && typeof outcome.meta === 'object' ? outcome.meta : {}),
+        modelName: currentModelFile ? path.basename(currentModelFile) : ''
+      });
+      updateMotionLabStatus('保存完了: ' + directory);
+      console.info('[FRAME motion lab] saved:', directory);
+      const openError = await shell.openPath(directory);
+      if (openError) console.warn('[FRAME motion lab] cannot open output:', openError);
+      return { ok: true, directory };
+    } catch (error) {
+      updateMotionLabStatus('保存失敗: ' + String(error?.message ?? error).slice(0, 180));
+      return { ok: false, message: motionLabStatus };
+    }
+  });
   ipcMain.handle('avatar:motion-restore', async event => {
     if (!isOurWindow(event) || !motionIdleId || !motionDirectory) return null;
     try { return await readLibraryMotion(motionIdleId); }
@@ -1263,6 +1339,7 @@ app.whenReady().then(async () => {
   });
   ipcMain.handle('avatar:choose', async event => {
     if (!mainWindow || event.sender !== mainWindow.webContents) throw new Error('Unauthorized window');
+    if (motionLabSession) throw new Error('歩行撮影が終わってからモデルを変更してください');
     return chooseModel();
   });
   ipcMain.on('avatar:menu', event => {
@@ -1538,6 +1615,7 @@ app.on('before-quit', event => {
     });
     return;
   }
+  clearMotionLabSession();
   closeAvatarMenu(true);
   browserCredentialPortal?.close();
   speechBridge?.close();
