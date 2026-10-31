@@ -1,6 +1,6 @@
-// FRAME digital-body transfer: the character is converted into temporary
-// screen-space fragments while the next MMD pose is loaded invisibly.
-// No external assets or shader packages are required.
+// FRAME digital-body transfer. The WebGL canvas itself fades in every
+// environment, even when Chromium cannot copy a GPU canvas into 2D Canvas.
+// Fragments and scanning highlights are optional, never a reason to skip fade.
 const clamp = value => Math.max(0, Math.min(1, value));
 const wave = number => {
   const x = Math.sin(number * 12.9898 + 78.233) * 43758.5453;
@@ -8,17 +8,20 @@ const wave = number => {
 };
 
 export class DigitalBodyWarp {
-  constructor(source, overlay, { disappearMs = 230, appearMs = 280 } = {}) {
+  constructor(source, overlay, { disappearMs = 260, appearMs = 300 } = {}) {
     this.source = source;
     this.overlay = overlay;
-    this.context = overlay.getContext('2d', { alpha: true });
+    this.context = overlay?.getContext('2d', { alpha: true }) ?? null;
     this.disappearMs = disappearMs;
     this.appearMs = appearMs;
     this.phase = 'idle';
     this.since = 0;
     this.pending = null;
-    this.enabled = this.context !== null;
-    this.overlay.hidden = true;
+    this.fragmentsEnabled = Boolean(this.context);
+    // A model without overlay support still fades. The preference switch,
+    // rather than the OS reduced-motion hint, controls this explicit effect.
+    this.enabled = Boolean(this.source?.style);
+    if (this.overlay) this.overlay.hidden = true;
   }
 
   get active() { return this.phase !== 'idle'; }
@@ -32,21 +35,21 @@ export class DigitalBodyWarp {
 
   cancel() {
     this.phase = 'idle';
-    this.source.style.opacity = '';
-    this.overlay.hidden = true;
+    if (this.source) this.source.style.opacity = '';
+    if (this.overlay) this.overlay.hidden = true;
     this.context?.clearRect(0, 0, this.overlay.width, this.overlay.height);
     this.settle();
   }
 
   conceal() {
-    if (!this.enabled || window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-      return Promise.resolve();
-    }
+    if (!this.enabled) return Promise.resolve();
     this.cancel();
     this.phase = 'out';
     this.since = performance.now();
-    this.overlay.hidden = false;
-    this.source.style.opacity = '0';
+    // Start from a completely visible body; render() fades it to zero.
+    this.source.style.opacity = '1';
+    if (this.overlay) this.overlay.hidden = !this.fragmentsEnabled;
+    console.info('[FRAME warp] conceal start; fragments:', this.fragmentsEnabled);
     return new Promise(resolve => { this.pending = resolve; });
   }
 
@@ -54,28 +57,26 @@ export class DigitalBodyWarp {
     if (!this.enabled || this.phase !== 'hidden') return Promise.resolve();
     this.phase = 'in';
     this.since = performance.now();
+    this.source.style.opacity = '0';
+    if (this.overlay) this.overlay.hidden = !this.fragmentsEnabled;
+    console.info('[FRAME warp] reveal start');
     return new Promise(resolve => { this.pending = resolve; });
   }
 
   render(now) {
     if (this.phase === 'idle') return;
-    const ctx = this.context;
-    if (!ctx) { this.cancel(); return; }
-
-    const width = Math.max(1, Math.round(this.overlay.clientWidth));
-    const height = Math.max(1, Math.round(this.overlay.clientHeight));
-    if (this.overlay.width !== width || this.overlay.height !== height) {
-      this.overlay.width = width;
-      this.overlay.height = height;
-    }
-    ctx.clearRect(0, 0, width, height);
-    if (this.phase === 'hidden') return;
 
     const outgoing = this.phase === 'out';
     const duration = outgoing ? this.disappearMs : this.appearMs;
     const progress = clamp((now - this.since) / duration);
+    if (this.phase === 'hidden') {
+      this.source.style.opacity = '0';
+      return;
+    }
     if (progress >= 1) {
       if (outgoing) {
+        this.source.style.opacity = '0';
+        this.context?.clearRect(0, 0, this.overlay.width, this.overlay.height);
         this.phase = 'hidden';
         this.settle();
       } else {
@@ -84,43 +85,53 @@ export class DigitalBodyWarp {
       return;
     }
 
-    // The source WebGL canvas is still animated, even though CSS hides it.
-    // Copy only its translucent character pixels onto a temporary 2D canvas.
-    const visibility = outgoing ? Math.pow(1 - progress, 1.2) : Math.pow(progress, 0.85);
+    const visibility = outgoing ? (1 - progress) ** 1.6 : progress ** 1.5;
+    // Guaranteed fallback: the body itself fades. This does not depend on a
+    // 2D context, GPU canvas readback, image assets or Windows animations.
+    this.source.style.opacity = visibility.toFixed(3);
+    if (!this.context || !this.fragmentsEnabled) return;
+    const ctx = this.context;
+    const width = Math.max(1, Math.round(this.overlay.clientWidth));
+    const height = Math.max(1, Math.round(this.overlay.clientHeight));
+    if (this.overlay.width !== width || this.overlay.height !== height) {
+      this.overlay.width = width;
+      this.overlay.height = height;
+    }
+    ctx.clearRect(0, 0, width, height);
+
     const glitch = Math.sin(Math.PI * progress);
     try {
-      ctx.globalAlpha = visibility;
-      ctx.drawImage(this.source, 0, 0, width, height);
-      ctx.globalAlpha = 1;
-
       const bandHeight = Math.max(8, Math.round(height / 62));
-      const sourceHeight = this.source.height;
       const tick = Math.floor(now / 42);
+      const srcHeight = this.source.height;
+      ctx.globalAlpha = clamp(glitch * 0.34);
+      ctx.drawImage(this.source, 0, 0, width, height);
       for (let y = 0, band = 0; y < height; y += bandHeight, band++) {
-        const heightHere = Math.min(bandHeight, height - y);
         const seed = wave(band * 7.7 + tick * 0.21);
         if (seed < 0.38) continue;
-        const offset = Math.round((wave(band * 13.4 + tick) - 0.5) * 34 * glitch);
-        const sy = Math.floor(y * sourceHeight / height);
-        const sh = Math.max(1, Math.ceil(heightHere * sourceHeight / height));
-        ctx.globalAlpha = clamp(visibility * glitch * (0.28 + 0.35 * seed));
+        const h = Math.min(bandHeight, height - y);
+        const offset = Math.round((wave(band * 13.4 + tick) - 0.5) * 44 * glitch);
+        const sy = Math.floor(y * srcHeight / height);
+        const sh = Math.max(1, Math.ceil(h * srcHeight / height));
+        ctx.globalAlpha = clamp((0.25 + seed * 0.4) * glitch);
         ctx.drawImage(this.source, 0, sy, this.source.width, sh,
-          offset, y, width, heightHere);
+          offset, y, width, h);
       }
       ctx.globalAlpha = 1;
-
-      // Cyan scan fragments are clipped to the character silhouette.
       ctx.globalCompositeOperation = 'source-atop';
-      ctx.fillStyle = 'rgba(48, 191, 255, ' + (0.12 * glitch).toFixed(3) + ')';
+      ctx.fillStyle = 'rgba(65, 197, 255, ' + (0.22 * glitch).toFixed(3) + ')';
       ctx.fillRect(0, 0, width, height);
-      ctx.fillStyle = 'rgba(130, 226, 255, ' + (0.30 * glitch).toFixed(3) + ')';
-      for (let i = 0; i < 12; i++) {
-        const yy = Math.round(wave(i * 11.3 + tick * 0.08) * height);
-        ctx.fillRect(0, yy, width, Math.max(1, Math.round(height / 600)));
+      ctx.fillStyle = 'rgba(155, 229, 255, ' + (0.45 * glitch).toFixed(3) + ')';
+      for (let i = 0; i < 14; i++) {
+        const y = Math.round(wave(i * 11.3 + tick * 0.08) * height);
+        ctx.fillRect(0, y, width, Math.max(1, Math.round(height / 700)));
       }
     } catch (error) {
-      console.warn('[FRAME warp] drawing failed, continuing without effect', error);
-      this.cancel();
+      // GPU-to-2D copies can fail on some graphics drivers. Retain the
+      // guaranteed main-canvas fade, and avoid continuously retrying.
+      console.warn('[FRAME warp] fragments unavailable, using fade:', error);
+      this.fragmentsEnabled = false;
+      this.overlay.hidden = true;
     } finally {
       ctx.globalAlpha = 1;
       ctx.globalCompositeOperation = 'source-over';
