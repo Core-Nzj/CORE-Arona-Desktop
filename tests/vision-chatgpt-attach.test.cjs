@@ -19,7 +19,8 @@ function runAttachment({ hostname = 'chatgpt.com', editorPresent = true,
     files: null, dispatchEvent(event) { events.push(event.type); }
   }));
   const form = {
-    contains: node => inputNodes.includes(node)
+    contains: node => inputNodes.includes(node),
+    dispatchEvent(event) { events.push(event.type); }
   };
   const editor = {
     closest: name => name === 'form' ? form : null,
