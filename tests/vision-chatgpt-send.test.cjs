@@ -97,6 +97,13 @@ test('send refuses typed draft appearing after attachment', async () => {
   assert.equal(rigged.getClicks(), 0);
 });
 
+test('another attachment added after preflight blocks image send', async () => {
+  const rigged = rig({ existingFile: true });
+  const response = await rigged.funcs.frameSendPreparedImageToChatGPT(URL);
+  assert.equal(response.reason, 'other-attachment-added');
+  assert.equal(rigged.getClicks(), 0);
+});
+
 test('no matching file and no enabled send button means no click', async () => {
   const rigged = rig({ ownPng: false, sendEnabled: false });
   const response = await rigged.funcs.frameSendPreparedImageToChatGPT(URL);
