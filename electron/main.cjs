@@ -6,8 +6,8 @@ const path = require('node:path');
 const { resolveAssetPath } = require('./asset-path.cjs');
 const { scanMotionLibrary, readMotionFile } = require('./motion-library.cjs');
 const {
-  BASE_WIDTH, BASE_HEIGHT, INITIAL_SCALE, MIN_SCALE,
-  clampScale, windowSizeForScale, boundsForScale
+  BASE_WIDTH, BASE_HEIGHT, INITIAL_SCALE, MIN_SCALE, ZOOM_IN_FACTOR,
+  clampScale, resolveZoomScale, startupScaleForArea, windowSizeForScale, boundsForScale
 } = require('./avatar-window-size.cjs');
 const { VoiceProxyClient, PROXY_ORIGIN } = require('./voice-proxy.cjs');
 const { VoiceCredentialStore } = require('./voice-credentials.cjs');
@@ -562,8 +562,8 @@ function zoomAvatarWindow(action) {
   const currentBounds = mainWindow.getBounds();
   const workArea = screen.getDisplayMatching(currentBounds).workArea;
   const requestedScale = action === 'reset'
-    ? clampScale(INITIAL_SCALE, workArea)
-    : avatarScale * Math.pow(1 / 0.85, steps);
+    ? startupScaleForArea(workArea)
+    : avatarScale * Math.pow(ZOOM_IN_FACTOR, steps);
   // Center-based anchoring avoids the cursor/window oscillation on resize.
   const { bounds, scale, cameraZoom } =
     boundsForScale(currentBounds, workArea, requestedScale);
@@ -958,10 +958,12 @@ async function executeMenuAction(action, value) {
 }
 
 function createWindow() {
-  // Start near the previously requested 2x avatar size, without clipping
-  // outside the current monitor's working area.
-  avatarScale = clampScale(INITIAL_SCALE, screen.getPrimaryDisplay().workArea);
-  const { width, height } = windowSizeForScale(avatarScale);
+  // The initial pose equals five "zoom in" clicks from the old 2x default.
+  // Cap native bounds to the monitor, retaining excess size as camera zoom.
+  const workArea = screen.getPrimaryDisplay().workArea;
+  const startupZoom = resolveZoomScale(startupScaleForArea(workArea), workArea);
+  avatarScale = startupZoom.scale;
+  const { width, height } = windowSizeForScale(startupZoom.nativeScale);
   mainWindow = new BrowserWindow({
     title: 'CORE Arona Desktop',
     width,
