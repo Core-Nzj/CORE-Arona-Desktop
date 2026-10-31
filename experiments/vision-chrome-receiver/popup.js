@@ -8,6 +8,8 @@ const attachmentPanel = document.getElementById('attachment-panel');
 const targetLabel = document.getElementById('target');
 const attachConsent = document.getElementById('attach-consent');
 const attachButton = document.getElementById('attach');
+const sendConsent = document.getElementById('send-consent');
+const sendButton = document.getElementById('send-image');
 const attachStatus = document.getElementById('attach-status');
 const discardButton = document.getElementById('discard');
 
@@ -41,6 +43,9 @@ function clearPreview() {
   attachConsent.checked = false;
   attachConsent.disabled = true;
   attachButton.disabled = true;
+  sendConsent.checked = false;
+  sendConsent.disabled = true;
+  sendButton.disabled = true;
   attachStatus.textContent = '';
   targetLabel.textContent = '';
 }
@@ -55,6 +60,8 @@ async function updateTarget() {
     : 'ChatGPTの会話タブを開いてから、拡張アイコンを押してください。';
   attachConsent.disabled = !tab || attachmentBusy;
   attachButton.disabled = !tab || !attachConsent.checked || attachmentBusy;
+  sendConsent.disabled = !tab || attachmentBusy;
+  sendButton.disabled = !tab || !sendConsent.checked || attachmentBusy;
 }
 
 function readDataUrl(blob) {
@@ -67,6 +74,7 @@ function readDataUrl(blob) {
 }
 
 attachConsent.addEventListener('change', () => { void updateTarget(); });
+sendConsent.addEventListener('change', () => { void updateTarget(); });
 
 discardButton.addEventListener('click', () => {
   if (attachmentBusy) return;
@@ -75,6 +83,7 @@ discardButton.addEventListener('click', () => {
 });
 
 receiveButton.addEventListener('click', async () => {
+  if (attachmentBusy) return;
   const token = input.value.trim();
   if (!/^[a-f0-9]{64}$/.test(token)) {
     status.textContent = 'FRAMEの認証コード（64文字）を貼り付けてください。';
@@ -134,6 +143,9 @@ attachButton.addEventListener('click', async () => {
   attachmentBusy = true;
   attachButton.disabled = true;
   attachConsent.disabled = true;
+  sendButton.disabled = true;
+  sendConsent.disabled = true;
+  receiveButton.disabled = true;
   discardButton.disabled = true;
   attachStatus.textContent = 'ChatGPTの入力欄へ画像を渡しています…';
   try {
@@ -171,6 +183,94 @@ attachButton.addEventListener('click', async () => {
     attachStatus.textContent = '添付失敗: ' + String(error?.message || error);
   } finally {
     attachmentBusy = false;
+    discardButton.disabled = false;
+    receiveButton.disabled = false;
+    await updateTarget();
+  }
+});
+
+
+const sendErrorMessages = {
+  'wrong-origin': '対象がChatGPTではありません',
+  'composer-not-found': 'ChatGPTの入力欄が見つかりません',
+  'composer-form-not-found': 'ChatGPTの送信フォームが見つかりません',
+  'existing-text': '入力済みの文章があります。誤送信防止のため中止しました',
+  'existing-attachment': '既存の添付画像があります。誤送信防止のため中止しました',
+  'existing-draft': '未送信の内容があります。誤送信防止のため中止しました',
+  'composer-disappeared': 'ChatGPTの入力欄が変化したため送信しませんでした',
+  'text-added': '送信直前に文章を検出したため送信しませんでした',
+  'attachment-not-ready': '添付完了を確認できず送信しませんでした。ChatGPTの入力欄をご確認ください'
+};
+
+sendButton.addEventListener('click', async () => {
+  if (!imageBlob || !sendConsent.checked || attachmentBusy) return;
+  attachmentBusy = true;
+  attachButton.disabled = true;
+  attachConsent.disabled = true;
+  sendButton.disabled = true;
+  sendConsent.disabled = true;
+  receiveButton.disabled = true;
+  discardButton.disabled = true;
+  attachStatus.textContent = '現在のChatGPT会話を検証しています…';
+  try {
+    const tab = await activeChatGPTTab();
+    if (!tab) throw new Error('現在のタブがChatGPTではありません');
+    const tabId = tab.id;
+    const expectedUrl = tab.url;
+
+    // Inspect the draft before adding anything. Never send existing content.
+    const inspection = await chrome.scripting.executeScript({
+      target: { tabId, allFrames: false },
+      func: frameVerifyEmptyChatGPTComposer,
+      world: 'ISOLATED'
+    });
+    const safe = inspection?.[0]?.result;
+    if (!safe?.ok) {
+      throw new Error(sendErrorMessages[safe?.reason] || '入力欄の安全確認に失敗しました');
+    }
+    const dataUrl = await readDataUrl(imageBlob);
+    if (typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image/png;base64,')) {
+      throw new Error('PNGをメモリ上で読み込めませんでした');
+    }
+    // Recheck that the target tab has not navigated to a different conversation.
+    const verifyTabs = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (verifyTabs?.[0]?.id !== tabId || verifyTabs[0].url !== expectedUrl) {
+      throw new Error('送信先の会話が変更されたため中止しました');
+    }
+    attachStatus.textContent = '画像を添付し、添付完了を確認しています…';
+    const injected = await chrome.scripting.executeScript({
+      target: { tabId, allFrames: false },
+      func: frameAttachPngToChatGPT,
+      args: [dataUrl],
+      world: 'ISOLATED'
+    });
+    const attachment = injected?.[0]?.result;
+    if (!attachment?.ok) {
+      throw new Error('画像を添付できませんでした（' + (attachment?.reason || 'unknown') + '）');
+    }
+    // The send function waits for this image's own attachment and an enabled
+    // send button. It will not send any typed text or use Enter as a fallback.
+    const submitted = await chrome.scripting.executeScript({
+      target: { tabId, allFrames: false },
+      func: frameSendPreparedImageToChatGPT,
+      args: [expectedUrl],
+      world: 'ISOLATED'
+    });
+    const outcome = submitted?.[0]?.result;
+    if (!outcome?.ok) {
+      throw new Error(sendErrorMessages[outcome?.reason] ||
+        '自動送信できませんでした。ChatGPTの入力欄で添付状態を確認してください');
+    }
+    // A click is NOT proof ChatGPT received the message. Prevent duplicate
+    // automatic sends regardless of what the receiving page does afterward.
+    clearPreview();
+    status.textContent = '送信ボタンを1回押しました。ChatGPT側でメッセージが届いたか確認してください。';
+  } catch (error) {
+    attachStatus.textContent = '自動送信を中止: ' + String(error?.message || error);
+    sendConsent.checked = false; // Any retry requires a new explicit approval.
+  } finally {
+    attachmentBusy = false;
+    receiveButton.disabled = false;
     discardButton.disabled = false;
     await updateTarget();
   }
