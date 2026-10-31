@@ -5,6 +5,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const { resolveAssetPath } = require('./asset-path.cjs');
 const { scanMotionLibrary, readMotionFile } = require('./motion-library.cjs');
+const { FramePluginHost } = require('./plugin-host.cjs');
 const {
   BASE_WIDTH, BASE_HEIGHT, INITIAL_SCALE, MIN_SCALE,
   clampScale, windowSizeForScale, boundsForScale
@@ -84,6 +85,7 @@ let voiceSynthesis = null;
 let voicePlaybackStatus = 'テスト再生はまだ実行されていません';
 let speechBridge = null;
 let speechBridgeError = '';
+let pluginHost = null;
 
 function isSettingsWindow(event) {
   return settingsWindow && !settingsWindow.isDestroyed() &&
@@ -667,7 +669,8 @@ function menuState() {
       autoHide: voisonaPrefs.autoHide,
       executableSet: !!voisonaPrefs.executable
     },
-    emotion: { selected: emotionState.selected, available: emotionState.available }
+    emotion: { selected: emotionState.selected, available: emotionState.available },
+    plugins: pluginHost?.state() || { entries: [], windows: [], message: 'プラグイン未初期化' }
   };
 }
 
@@ -819,6 +822,29 @@ async function executeMenuAction(action, value) {
       await saveModelSelection();
       mainWindow.webContents.send('avatar:motion-command', { type: 'reset-idle' });
       return '標準待機モーションへ戻しました';
+    case 'plugin.folder': {
+      if (!pluginHost) throw new Error('プラグイン基盤は未初期化です');
+      await fs.mkdir(pluginHost.root, { recursive: true });
+      const error = await shell.openPath(pluginHost.root);
+      if (error) throw new Error(error);
+      return 'プラグインフォルダを開きました';
+    }
+    case 'plugin.refresh':
+      if (!pluginHost) throw new Error('プラグイン基盤は未初期化です');
+      await pluginHost.refresh();
+      return pluginHost.message;
+    case 'plugin.toggle': {
+      if (!pluginHost) throw new Error('プラグイン基盤は未初期化です');
+      const item = pluginHost.state().entries.find(entry => entry.id === value);
+      if (!item) throw new Error('指定されたプラグインはありません');
+      await pluginHost.setEnabled(item.id, !item.enabled);
+      return (item.enabled ? '無効化しました: ' : '利用を許可しました: ') + item.name;
+    }
+    case 'plugin.listWindows': {
+      if (!pluginHost) throw new Error('プラグイン基盤は未初期化です');
+      const windows = await pluginHost.listWindows(value);
+      return 'ウィンドウを' + windows.length + '件取得しました（ローカル表示のみ）';
+    }
     case 'voice.settings':
       openVoiceSettings();
       return '接続設定を開きました';
@@ -985,6 +1011,9 @@ app.whenReady().then(async () => {
   await restoreModelSelection();
   await refreshMotionLibrary();
   await restoreMenuLayout();
+  pluginHost = new FramePluginHost({ dataDirectory: app.getPath('userData') });
+  try { await pluginHost.initialize(); }
+  catch (error) { console.warn('[FRAME Plugins] initialization failed:', error?.message); }
   protocol.handle(SCHEME, handleModelAsset);
 
   ipcMain.handle('avatar:current', () => infoForCurrentModel());
