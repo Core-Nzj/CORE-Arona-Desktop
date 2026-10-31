@@ -19,6 +19,7 @@
   </header>
   <nav class="tabs" role="tablist" aria-label="カテゴリ">
     <button type="button" class="tab selected" data-tab="home" aria-selected="true">ホーム</button>
+    <button type="button" class="tab" data-tab="motion" aria-selected="false">モーション</button>
     <button type="button" class="tab" data-tab="voice" aria-selected="false">音声</button>
     <button type="button" class="tab" data-tab="emotion" aria-selected="false">表情</button>
     <button type="button" class="tab" data-tab="status" aria-selected="false">診断</button>
@@ -42,6 +43,28 @@
       </div>
       <p class="hint" id="motion-status">標準待機モーション</p>
       <button type="button" class="row danger exit" data-action="app.quit"><span>⏻</span>アプリを終了<b>›</b></button>
+    </section>
+    <section class="page" data-page="motion" hidden>
+      <div class="section-title"><span>MOTION LIBRARY</span><small id="motion-count">0件</small></div>
+      <p class="description">モーションをクリックすると、アバターが1回再生します。</p>
+      <div id="motion-folder" class="motion-folder" title="選択されたMotionsフォルダ">ライブラリを検索しています…</div>
+      <div class="motion-toolbar">
+        <button type="button" class="row" data-action="motion.folder">フォルダを指定</button>
+        <button type="button" class="row" data-action="motion.refresh">一覧を更新</button>
+      </div>
+      <p id="motion-library-status" class="hint">読み込み中</p>
+      <div class="motion-list" id="motion-list" role="group" aria-label="VMDモーション一覧"></div>
+      <div class="motion-toolbar gap-small">
+        <button type="button" class="row" data-action="motion.previous">‹ 前へ</button>
+        <button type="button" class="row" data-action="motion.next">次へ ›</button>
+      </div>
+      <p class="motion-current" id="motion-selected">選択中: なし</p>
+      <div class="stack">
+        <button type="button" class="row primary" data-action="motion.setIdle" id="motion-set-idle">この動きを待機に設定<b>›</b></button>
+        <button type="button" class="row" data-action="motion.stop">待機モーションへ戻す</button>
+        <button type="button" class="row" data-action="motion.resetIdle">標準待機に戻す</button>
+      </div>
+      <p class="hint" id="motion-idle">待機: 標準</p>
     </section>
     <section class="page" data-page="voice" hidden>
       <div class="section-title"><span>VOICE</span><small>VoiSona Talk</small></div>
