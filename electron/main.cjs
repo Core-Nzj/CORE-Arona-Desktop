@@ -76,6 +76,7 @@ let motionEntries = [];
 let motionSelectedId = null;
 let motionIdleId = null;
 let motionLibraryMessage = '未検索';
+let motionWarpEnabled = true;
 const voiceClient = new VoiceProxyClient();
 let voiceEntries = [];
 let voiceError = '接続を確認していません';
@@ -315,7 +316,8 @@ function infoForCurrentModel() {
   if (!currentModelFile) return null;
   return {
     name: path.basename(currentModelFile),
-    url: SCHEME + '://model/' + encodeURIComponent(path.basename(currentModelFile))
+    url: SCHEME + '://model/' + encodeURIComponent(path.basename(currentModelFile)),
+    motionWarpEnabled
   };
 }
 
@@ -335,6 +337,7 @@ async function restoreModelSelection() {
     }
     if (typeof settings.motionIdleId === 'string') motionIdleId = settings.motionIdleId;
     if (typeof settings.motionSelectedId === 'string') motionSelectedId = settings.motionSelectedId;
+    if (typeof settings.motionWarpEnabled === 'boolean') motionWarpEnabled = settings.motionWarpEnabled;
     if (typeof settings.modelPath !== 'string') return;
     if (!['.pmx', '.pmd'].includes(path.extname(settings.modelPath).toLowerCase())) return;
     const stats = await fs.stat(settings.modelPath);
@@ -355,7 +358,8 @@ async function saveModelSelection() {
     voisonaExecutable: voisonaPrefs.executable,
     motionDirectory,
     motionIdleId,
-    motionSelectedId
+    motionSelectedId,
+    motionWarpEnabled
   }, null, 2), 'utf8');
 }
 
@@ -647,6 +651,7 @@ function menuState() {
   return {
     modelName: currentModelFile ? path.basename(currentModelFile) : '未選択',
     motionStatus: idleDiagnostics.split('\n')[0],
+    motionWarpEnabled,
     motionLibrary: {
       directory: motionDirectory || '',
       entries: motionEntries,
@@ -814,6 +819,11 @@ async function executeMenuAction(action, value) {
       mainWindow.webContents.send('avatar:motion-command', { type: 'idle', ...motion });
       return '待機モーションに設定しました: ' + motion.name;
     }
+    case 'motion.warpToggle':
+      motionWarpEnabled = !motionWarpEnabled;
+      await saveModelSelection();
+      mainWindow.webContents.send('avatar:motion-warp-enabled', motionWarpEnabled);
+      return 'デジタル転送演出: ' + (motionWarpEnabled ? 'ON' : 'OFF');
     case 'motion.resetIdle':
       motionIdleId = null;
       await saveModelSelection();
