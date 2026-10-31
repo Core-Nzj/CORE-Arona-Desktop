@@ -15,7 +15,7 @@ function captureCanvas(canvas) {
   if (!ctx) throw new Error('キャプチャ用Canvasを初期化できませんでした');
   // A solid dark background makes the light and transparent parts of MMD
   // models legible in screenshot viewers and the contact sheet.
-  ctx.fillStyle = '#242936';
+  ctx.fillStyle = '#1d1d1f';
   ctx.fillRect(0, 0, width, height);
   ctx.drawImage(canvas, 0, 0, width, height);
   return shot;
@@ -29,7 +29,7 @@ function newSheet(shotWidth, shotHeight) {
   sheet.height = (shotHeight + pad + label) * 3 + pad;
   const ctx = sheet.getContext('2d', { alpha: false });
   if (!ctx) throw new Error('比較用Canvasを初期化できませんでした');
-  ctx.fillStyle = '#171c28';
+  ctx.fillStyle = '#0e0e0e';
   ctx.fillRect(0, 0, sheet.width, sheet.height);
   return { sheet, ctx, pad, label };
 }
@@ -38,7 +38,7 @@ function addSheetFrame(target, image, index, frame) {
   const x = target.pad + (index % 3) * (image.width + target.pad);
   const y = target.pad + Math.floor(index / 3) * (image.height + target.pad + target.label);
   target.ctx.drawImage(image, x, y);
-  target.ctx.fillStyle = '#e3ebf8';
+  target.ctx.fillStyle = '#f5f5f7';
   target.ctx.font = 'bold 16px sans-serif';
   target.ctx.fillText('F' + String(frame).padStart(2, '0') +
     ' / ' + (frame / 30).toFixed(3) + 's', x + 6, y + image.height + 19);
@@ -57,7 +57,6 @@ export async function captureWalkingReview({
   const modelHeight = heightBounds.max.y - heightBounds.min.y;
   const boneNames = model.runtimeBones.map(bone => bone.name);
   const temporaryHandles = [];
-  const createdResults = [];
   let metadata = null;
 
   runtime.pauseAnimation();
@@ -70,12 +69,10 @@ export async function captureWalkingReview({
       temporaryHandles.push(handle);
       model.setRuntimeAnimation(handle);
       runtime.setManualAnimationDuration(WALK_FRAMES);
-      createdResults.push(result);
       metadata = { modelHeight, stride: result.stride, bones: result.rig };
 
       for (const view of LAB_VIEWS) {
         camera.alpha = labCameraAlpha(view, direction);
-        const images = [];
         let sheet = null;
         for (let index = 0; index < LAB_FRAMES.length; index++) {
           const frame = LAB_FRAMES[index];
@@ -94,7 +91,6 @@ export async function captureWalkingReview({
             rightFoot: walkFootAt(phase + 0.5, result.stride, lift, direction)
           };
           await save(labFileName(direction, view, frame), shot.toDataURL('image/png'), info);
-          images.push(frame);
         }
         if (sheet) await save(labSheetName(direction, view),
           sheet.sheet.toDataURL('image/png'), { direction, view });
@@ -105,15 +101,18 @@ export async function captureWalkingReview({
     // Even failed captures must not leave FRAME locked in a sideways pose.
     camera.alpha = savedCamera.alpha;
     camera.beta = savedCamera.beta;
-    model.setRuntimeAnimation(originalHandle);
-    runtime.setManualAnimationDuration(originalDuration);
-    await runtime.seekAnimation(originalFrame, true);
-    if (wasPlaying) await runtime.playAnimation();
-    else runtime.pauseAnimation();
-    for (const handle of temporaryHandles) {
-      try { model.destroyRuntimeAnimation(handle); }
-      catch (error) { console.warn('[FRAME motion lab] temp cleanup failed:', error); }
+    try {
+      model.setRuntimeAnimation(originalHandle);
+      runtime.setManualAnimationDuration(originalDuration);
+      await runtime.seekAnimation(originalFrame, true);
+      if (wasPlaying) await runtime.playAnimation();
+      else runtime.pauseAnimation();
+    } finally {
+      for (const handle of temporaryHandles) {
+        try { model.destroyRuntimeAnimation(handle); }
+        catch (error) { console.warn('[FRAME motion lab] temp cleanup failed:', error); }
+      }
+      scene.render();
     }
-    scene.render();
   }
 }
