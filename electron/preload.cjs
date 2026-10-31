@@ -24,6 +24,7 @@ contextBridge.exposeInMainWorld('aronaDesktop', Object.freeze({
   reportEmotionState: (state) => ipcRenderer.send('avatar:emotions-state', state),
   onEmotionChange: (callback) => ipcRenderer.on('avatar:emotion-change', (_event, id) => callback(id)),
   onMotionCommand: (callback) => ipcRenderer.on('avatar:motion-command', (_event, command) => callback(command)),
+  motionLabReady: () => ipcRenderer.send('avatar:motion-lab-ready'),
   onMotionLabStart: callback => ipcRenderer.on('avatar:motion-lab-start', (_event, request) => callback(request)),
   motionLabSave: (id, name, pngData, info) =>
     ipcRenderer.invoke('avatar:motion-lab:save', id, name, pngData, info),
