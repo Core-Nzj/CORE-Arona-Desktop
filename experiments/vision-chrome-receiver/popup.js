@@ -201,7 +201,8 @@ const sendErrorMessages = {
   'text-added': '送信直前に文章を検出したため送信しませんでした',
   'other-attachment-added': '送信直前に別の添付を検出したため送信しませんでした',
   'conversation-changed': '送信先の会話が変更されたため送信しませんでした',
-  'attachment-not-ready': '添付完了を確認できず送信しませんでした。ChatGPTの入力欄をご確認ください'
+  'attachment-not-ready': '画像の添付待機が完了せず、送信を中止しました',
+  'draft-changed': '送信直前に文章または会話が変化したため中止しました'
 };
 
 sendButton.addEventListener('click', async () => {
@@ -255,13 +256,22 @@ sendButton.addEventListener('click', async () => {
     const submitted = await chrome.scripting.executeScript({
       target: { tabId, allFrames: false },
       func: frameSendPreparedImageToChatGPT,
-      args: [expectedUrl],
+      args: [expectedUrl, safe.baselineImages || []],
       world: 'ISOLATED'
     });
     const outcome = submitted?.[0]?.result;
     if (!outcome?.ok) {
-      throw new Error(sendErrorMessages[outcome?.reason] ||
-        '自動送信できませんでした。ChatGPTの入力欄で添付状態を確認してください');
+      const reason = sendErrorMessages[outcome?.reason] ||
+        '自動送信できませんでした。ChatGPTの入力欄で添付状態を確認してください';
+      const diag = outcome?.diagnostics;
+      // Status flags only; do not copy image, filenames or text into diagnostics.
+      const detail = diag ? (
+        ' [画像検出:' + (diag.imageDetected ? 'あり' : 'なし') +
+        ' / 送信ボタン:' + (diag.sendButtonFound ?
+          (diag.sendButtonEnabled ? '有効' : '無効') : '未検出') +
+        ' / アップロード中:' + (diag.uploading ? 'はい' : 'いいえ') + ']'
+      ) : '';
+      throw new Error(reason + detail);
     }
     // A click is NOT proof ChatGPT received the message. Prevent duplicate
     // automatic sends regardless of what the receiving page does afterward.
