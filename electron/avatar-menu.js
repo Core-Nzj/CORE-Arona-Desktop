@@ -35,6 +35,7 @@ function makeOption(label, id, selected, enabled, action) {
 function renderState(state) {
   if (!state || typeof state !== 'object') return;
   document.getElementById('model-name').textContent = state.modelName || '未選択';
+  document.getElementById('motion-status').textContent = state.motionStatus || '標準待機モーション';
   document.getElementById('voice-status').textContent = state.voiceStatus || '未接続';
   document.getElementById('voice-light').classList.toggle('online', !!state.voiceReady);
   const app = state.voisona || {};
