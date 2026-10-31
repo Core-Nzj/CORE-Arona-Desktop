@@ -71,8 +71,8 @@ button:focus-visible { outline: 2px solid #2997ff; outline-offset: 2px; }
   flex: none;
   border: 0;
   border-radius: 0 17px 0 0;
-  background: rgba(255,118,125,.75);
-  color: #171719;
+  background: rgba(117,34,52,.16);
+  color: #d7b9c2;
   cursor: pointer;
   font-size: 20px;
   font-weight: 400;
@@ -81,8 +81,8 @@ button:focus-visible { outline: 2px solid #2997ff; outline-offset: 2px; }
   -webkit-app-region: no-drag;
   transition: background-color .13s, color .13s;
 }
-.titlebar-close:hover { background: rgba(255,132,139,.96); color: #171719; }
-.titlebar-close:active { background: rgba(255,97,105,.9); color: #171719; }
+.titlebar-close:hover { background: rgba(167,95,111,.52); color: #ffebf0; }
+.titlebar-close:active { background: rgba(142,67,86,.67); color: #fff; }
 .heading { flex: none; padding: 16px 20px 15px; }
 .eyebrow { color: #86868b; font-size: calc(9px * var(--text-scale)); font-weight: 600; letter-spacing: .11em; }
 h1 { margin: 5px 0 3px; color: #f5f5f7; font-size: calc(23px * var(--text-scale)); font-weight: 650; line-height: 1.2; letter-spacing: -.02em; }
