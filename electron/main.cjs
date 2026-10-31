@@ -8,6 +8,8 @@ const { scanMotionLibrary, readMotionFile } = require('./motion-library.cjs');
 const { FramePluginHost } = require('./plugin-host.cjs');
 const { VisionSessionBroker } = require('./vision-session-broker.cjs');
 const { VisionLocalAdapter, LOCAL_DESTINATION_ID } = require('./vision-local-adapter.cjs');
+const { VisionBrowserAdapter, DESTINATION_ID: BROWSER_DESTINATION_ID } =
+  require('./vision-browser-adapter.cjs');
 const {
   BASE_WIDTH, BASE_HEIGHT, INITIAL_SCALE, MIN_SCALE, ZOOM_IN_FACTOR,
   clampScale, resolveZoomScale, startupScaleForArea, windowSizeForScale, boundsForScale
@@ -117,6 +119,8 @@ let speechBridgeError = '';
 let pluginHost = null;
 // In-process only; no listeners or network connections are opened.
 const visionBroker = new VisionSessionBroker({ adapter: new VisionLocalAdapter() });
+const visionBrowserAdapter = new VisionBrowserAdapter();
+const visionBrowserBroker = new VisionSessionBroker({ adapter: visionBrowserAdapter });
 
 function isSettingsWindow(event) {
   return settingsWindow && !settingsWindow.isDestroyed() &&
@@ -766,6 +770,11 @@ function menuState() {
     visionShare: {
       session: visionBroker.getState(),
       destination: visionBroker.getCapabilities()
+    },
+    browserShare: {
+      session: visionBrowserBroker.getState(),
+      destination: visionBrowserBroker.getCapabilities(),
+      receipt: visionBrowserAdapter.getPending()
     }
   };
 }
@@ -791,6 +800,7 @@ function finishMenuHide(generation) {
 function closeAvatarMenu(force = false) {
   ++menuCaptureGeneration;
   visionBroker.revoke();
+  visionBrowserBroker.revoke();
   pluginHost?.clearCapture();
   finishMenuResize();
   if (!menuWindow || menuWindow.isDestroyed()) return;
@@ -859,13 +869,15 @@ function createAvatarMenuWindow() {
   });
   popup.on('blur', () => {
     if (menuWindow === popup && popup.isVisible() && !menuResize &&
-        !motionFolderDialogOpen && !menuClosing) closeAvatarMenu();
+        !motionFolderDialogOpen && !menuClosing &&
+        visionBrowserBroker.getState()?.status !== 'delivering') closeAvatarMenu();
   });
   popup.on('closed', () => {
     if (menuResize?.window === popup) menuResize = null;
     if (menuWindow === popup) {
       ++menuCaptureGeneration;
       visionBroker.revoke();
+      visionBrowserBroker.revoke();
       pluginHost?.clearCapture();
       menuWindow = null;
       menuPrepared = false;
@@ -1022,6 +1034,7 @@ async function executeMenuAction(action, value) {
     case 'plugin.refresh':
       if (!pluginHost) throw new Error('プラグイン基盤は未初期化です');
       visionBroker.revoke();
+      visionBrowserBroker.revoke();
       await pluginHost.refresh();
       return pluginHost.message;
     case 'plugin.toggle': {
@@ -1029,12 +1042,14 @@ async function executeMenuAction(action, value) {
       const item = pluginHost.state().entries.find(entry => entry.id === value);
       if (!item) throw new Error('指定されたプラグインはありません');
       visionBroker.revoke();
+      visionBrowserBroker.revoke();
       await pluginHost.setEnabled(item.id, !item.enabled);
       return (item.enabled ? '無効化しました: ' : '利用を許可しました: ') + item.name;
     }
     case 'plugin.listWindows': {
       if (!pluginHost) throw new Error('プラグイン基盤は未初期化です');
       visionBroker.revoke();
+      visionBrowserBroker.revoke();
       const windows = await pluginHost.listWindows(value);
       return 'ウィンドウを' + windows.length + '件取得しました（ローカル表示のみ）';
     }
@@ -1045,6 +1060,7 @@ async function executeMenuAction(action, value) {
       if (!selected || typeof selected.pluginId !== 'string' ||
           typeof selected.windowId !== 'string') throw new Error('撮影対象が不正です');
       visionBroker.revoke(); // Every new image requires fresh consent.
+      visionBrowserBroker.revoke();
       const generation = menuCaptureGeneration;
       const image = await pluginHost.captureWindow(selected.pluginId, selected.windowId);
       // A pending capture must not repopulate a closed or reopened panel.
@@ -1073,6 +1089,7 @@ async function executeMenuAction(action, value) {
     }
     case 'plugin.clearCapture':
       visionBroker.revoke();
+      visionBrowserBroker.revoke();
       pluginHost?.clearCapture();
       return '撮影画像を消去しました';
     case 'vision.revoke':
@@ -1560,6 +1577,7 @@ app.on('before-quit', event => {
     return;
   }
   closeAvatarMenu(true);
+  void visionBrowserBroker.disconnect().catch(() => {});
   browserCredentialPortal?.close();
   speechBridge?.close();
   proxyManager.stop();
