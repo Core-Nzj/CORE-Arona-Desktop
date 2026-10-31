@@ -40,6 +40,9 @@ test('local gallery escapes untrusted model names and links valid images', () =>
   assert.ok(gallery.includes('&lt;script&gt;'));
   assert.ok(!gallery.includes('<script>'));
   assert.ok(gallery.includes('sheet-left-front.png'));
+  assert.ok(gallery.includes('walk-left-front-f00.png'));
+  assert.ok(gallery.includes('<section>'));
+  assert.ok(!gallery.includes('undefined'));
   assert.ok(gallery.includes('manifest.json'));
 });
 
