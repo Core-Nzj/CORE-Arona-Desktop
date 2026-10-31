@@ -34,6 +34,7 @@ RegisterMmdRuntimeModelAnimation();
 RegisterMmdCompositeRuntimeModelAnimation();
 
 const canvas = document.getElementById('avatar-canvas');
+const avatarStage = document.getElementById('avatar-stage');
 const bodyWarp = new DigitalBodyWarp(canvas, document.getElementById('digital-warp-canvas'));
 const status = document.getElementById('status');
 const placeholder = document.getElementById('placeholder');
@@ -239,7 +240,7 @@ const alphaContext = alphaCanvas.getContext('2d', { willReadFrequently: true });
 function showStatus(message) {
   placeholder.hidden = false;
   status.textContent = message;
-  window.aronaDesktop.setAvatarRegion(null);
+  regionDirty = true;
   hitRegion = null;
 }
 
@@ -304,8 +305,15 @@ function projectAvatarBounds() {
 
 function applyAvatarRegion() {
   if (!placeholder.hidden || !activeRoot) {
-    hitRegion = null;
-    window.aronaDesktop.setAvatarRegion(null);
+    // The model chooser must remain clickable even when no PMX is loaded.
+    // Native clicks outside this panel always pass through to other apps.
+    const panel = placeholder.getBoundingClientRect();
+    const stage = avatarStage.getBoundingClientRect();
+    hitRegion = [{
+      x: panel.left - stage.left, y: panel.top - stage.top,
+      width: panel.width, height: panel.height
+    }];
+    window.aronaDesktop.setAvatarRegion(hitRegion);
     return;
   }
 
@@ -318,8 +326,8 @@ function applyAvatarRegion() {
   const rows = Math.ceil(screenHeight / tileSize);
 
   try {
-    // The canvas is a transparent WebGL render. Shrinking it to 5px tiles
-    // preserves a coarse alpha mask for hair, sleeves, legs, gaps etc.
+    // 5px alpha tiles are input hit testing ONLY, never render clipping.
+    // Keep the full-resolution WebGL transparency and smooth outline visible.
     alphaCanvas.width = columns;
     alphaCanvas.height = rows;
     alphaContext.clearRect(0, 0, columns, rows);
@@ -704,7 +712,7 @@ async function startWalking(direction) {
       // The screen width is measured in Electron DIP, not MMD world units.
       // Match walking distance to the stance phase of the foot-IK tracks.
       const worldHeight = 2 * camera.radius * Math.tan(camera.fov / 2);
-      const pixelsPerUnit = window.innerHeight / Math.max(worldHeight, 0.01);
+      const pixelsPerUnit = canvas.clientHeight / Math.max(worldHeight, 0.01);
       const speed = Math.min(300, Math.max(25,
         walkTravelSpeed(cached.stride, pixelsPerUnit)));
       await switchMotionWithPolicy(requestId, model, cached.animation, async startFrame => {
