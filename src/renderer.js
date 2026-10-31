@@ -81,6 +81,7 @@ let observedFrameTime = 0;
 let idlePlaybackCheckTimer = null;
 let idleAnimationHandle = null;
 let currentMotionHandle = null;
+let motionWarpEnabled = true;
 let customIdleMotion = null;
 let activeImportedMotion = null;
 let motionRequestId = 0;
@@ -406,7 +407,7 @@ function queueMotionTransition(callback) {
 // the incoming VMD to frame zero, then reveal it while it is playing.
 // The same-motion idle loop never invokes this transfer.
 async function switchMotionWithWarp(requestId, model, change, animate = true) {
-  const canAnimate = animate && bodyWarp.enabled && !placeholder.hidden;
+  const canAnimate = animate && motionWarpEnabled && bodyWarp.enabled && !placeholder.hidden;
   if (canAnimate) await bodyWarp.conceal();
   if (requestId !== motionRequestId || model !== activeMmdModel) {
     if (canAnimate) bodyWarp.cancel();
@@ -565,6 +566,7 @@ async function loadModel(model) {
   if (!model) return;
   const seq = ++loadSequence;
   chooseButton.disabled = true;
+  motionWarpEnabled = model.motionWarpEnabled !== false;
   showStatus('読み込み中: ' + model.name);
   reportIdle('モデルを読み込み中: ' + model.name);
   let nextContainer;
@@ -763,6 +765,10 @@ window.aronaDesktop.onCameraZoom(factor => {
 });
 window.aronaDesktop.onEmotionChange(setEmotion);
 window.aronaDesktop.onMotionCommand(onMotionCommand);
+window.aronaDesktop.onMotionWarpEnabled(enabled => {
+  motionWarpEnabled = enabled !== false;
+  if (!motionWarpEnabled) bodyWarp.cancel();
+});
 window.aronaDesktop.onVoiceTest(() => speakLatest('先生、こんにちは！ コア・アロナ・デスクトップから、お話ししています。'));
 window.aronaDesktop.onVoiceText(text => { void speakLatest(text); });
 window.aronaDesktop.onVoiceStop(stopSpeech);
