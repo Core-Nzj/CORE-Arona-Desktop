@@ -195,7 +195,8 @@ class VisionSessionBroker {
     try {
       const response = await this.#adapter.deliver({
         requestId, destinationId: session.destinationId,
-        mimeType: 'image/png', imageBytes, signal: controller.signal
+        mimeType: 'image/png', imageBytes, signal: controller.signal,
+        expiresAt: session.expiresAt
       });
       if (controller.signal.aborted || this.#session !== session) {
         throw new Error('画像の受け渡しは取り消されました');
