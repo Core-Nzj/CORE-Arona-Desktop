@@ -4,6 +4,8 @@
 const BASE_WIDTH = 390;
 const BASE_HEIGHT = 590;
 const INITIAL_SCALE = 2;
+const STARTUP_ZOOM_CLICKS = 5;
+const ZOOM_IN_FACTOR = 1 / 0.85; // Keep in sync with menu zoom buttons.
 const MIN_SCALE = 1;
 const MAX_SCALE = 20 / 3; // Old maximum relative to an automatically fitted model.
 const SCREEN_MARGIN = 8;
@@ -38,6 +40,14 @@ function resolveZoomScale(requestedScale, workArea) {
   const nativeScale = Math.min(scale, nativeLimit);
   const cameraZoom = Math.min(MAX_ZOOM_MULTIPLIER, scale / nativeScale);
   return { scale, nativeScale, cameraZoom };
+}
+
+// Start exactly where five clicks on the original (screen-fitted) avatar
+// would land. The native viewport still fits the display; excess scale
+// becomes optical camera zoom instead of an off-screen window.
+function startupScaleForArea(workArea) {
+  const originalStart = clampScale(INITIAL_SCALE, workArea);
+  return resolveZoomScale(originalStart * Math.pow(ZOOM_IN_FACTOR, STARTUP_ZOOM_CLICKS), workArea).scale;
 }
 
 function windowSizeForScale(scale) {
@@ -78,6 +88,7 @@ function boundsForScale(oldBounds, workArea, requestedScale, screenAnchor = null
 }
 
 module.exports = {
-  BASE_WIDTH, BASE_HEIGHT, INITIAL_SCALE, MIN_SCALE,
-  maxScaleForArea, clampScale, resolveZoomScale, windowSizeForScale, boundsForScale
+  BASE_WIDTH, BASE_HEIGHT, INITIAL_SCALE, MIN_SCALE, STARTUP_ZOOM_CLICKS, ZOOM_IN_FACTOR,
+  maxScaleForArea, clampScale, resolveZoomScale, startupScaleForArea,
+  windowSizeForScale, boundsForScale
 };
