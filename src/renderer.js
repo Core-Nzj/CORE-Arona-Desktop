@@ -518,7 +518,7 @@ function onMotionCommand(command) {
     customIdleMotion = null;
     const requestId = ++motionRequestId;
     void returnToIdle(requestId, '標準待機モーションに戻りました').then(() => {
-      if (owner === activeMmdModel && oldIdle) {
+      if (requestId === motionRequestId && owner === activeMmdModel && oldIdle) {
         owner.destroyRuntimeAnimation(oldIdle.handle);
       }
     }).catch(error => reportIdle('待機への復帰に失敗: ' + String(error?.message ?? error)));
@@ -624,8 +624,12 @@ async function loadModel(model) {
     regionDirty = true;
     // Restore the saved local idle clip after the runtime and its generated
     // fallback have been initialized. Missing files leave the fallback active.
+    const restoreAfterRequest = motionRequestId;
     void window.aronaDesktop.restoreIdleMotion().then(motion => {
-      if (seq === loadSequence && motion) return playImportedMotion(motion, true);
+      // A manual preview or idle selection made during restore wins.
+      if (seq === loadSequence && restoreAfterRequest === motionRequestId && motion) {
+        return playImportedMotion(motion, true);
+      }
     }).catch(error => console.warn('[CORE motion] idle restore failed:', error));
   } catch (error) {
     if (seq === loadSequence) {
