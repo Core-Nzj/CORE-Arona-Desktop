@@ -171,7 +171,88 @@ async function completeMotionLab(session, meta = {}) {
   return session.directory;
 }
 
+// Restrict automatic deletion to FRAME-generated, complete review runs.
+// Never delete arbitrary folders, symlinks, unfinished captures or folders
+// where an operator has placed extra notes or other files.
+const RUN_DIRECTORY_NAME = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-[0-9a-f]{8}$/i;
+const MOTION_LAB_KEEP_RUNS = 3;
+const LAB_METADATA_FILES = new Set(['manifest.json', 'index.html', 'REVIEW_GUIDE.md']);
+
+async function completeRunIsSafeToRemove(folder) {
+  let entries;
+  try {
+    entries = await fs.readdir(folder, { withFileTypes: true });
+    if (entries.length !== 63 || entries.some(entry => !entry.isFile())) return false;
+    const files = new Set(entries.map(entry => entry.name));
+    if (LAB_METADATA_FILES.size !== 3 ||
+        ![...LAB_METADATA_FILES].every(name => files.has(name))) return false;
+    const images = entries.map(entry => entry.name)
+      .filter(name => !LAB_METADATA_FILES.has(name));
+    if (images.length !== 60 || images.some(name => !IMAGE_NAME.test(name))) return false;
+    const sheets = images.filter(name => name.startsWith('sheet-'));
+    if (sheets.length !== 6) return false;
+    const raw = await fs.readFile(path.join(folder, 'manifest.json'), 'utf8');
+    if (raw.length > 512 * 1024) return false;
+    const meta = JSON.parse(raw);
+    return meta.version === 1 && meta.motion === 'generated-walk' &&
+      Array.isArray(meta.files) && meta.files.length === 60 &&
+      meta.files.every(item => item && files.has(item.filename) &&
+        IMAGE_NAME.test(item.filename)) &&
+      new Set(meta.files.map(item => item.filename)).size === 60;
+  } catch (error) {
+    if (error.code === 'ENOENT' || error instanceof SyntaxError) return false;
+    throw error;
+  }
+}
+
+async function pruneMotionLabRuns(root, { keep = MOTION_LAB_KEEP_RUNS, protectedRun = null } = {}) {
+  if (!Number.isInteger(keep) || keep < 2) throw new Error('Invalid Motion Lab retention limit');
+  const runsPath = path.join(root, 'runs');
+  let names;
+  try { names = await fs.readdir(runsPath, { withFileTypes: true }); }
+  catch (error) {
+    if (error.code === 'ENOENT') return [];
+    throw error;
+  }
+
+  const all = names.filter(entry => entry.isDirectory() &&
+    RUN_DIRECTORY_NAME.test(entry.name)).map(entry => entry.name).sort().reverse();
+  const eligible = [];
+  for (const name of all) {
+    const folder = path.join(runsPath, name);
+    // lstat and readdir reject links and unexpected nested files. This also
+    // prevents touching any notes/manual archives outside normal runs.
+    const stat = await fs.lstat(folder);
+    if (!stat.isDirectory() || stat.isSymbolicLink()) continue;
+    if (await completeRunIsSafeToRemove(folder)) eligible.push({ name, folder });
+  }
+  // The new completed run and anything marked as latest must remain.
+  const guard = new Set(eligible.slice(0, keep).map(entry => entry.folder));
+  if (protectedRun) guard.add(path.resolve(protectedRun));
+  const latestPath = path.join(root, 'latest.json');
+  try {
+    const latest = JSON.parse(await fs.readFile(latestPath, 'utf8'));
+    if (typeof latest.folder === 'string') {
+      const normalized = path.resolve(root, latest.folder);
+      if (eligible.some(entry => entry.folder === normalized)) guard.add(normalized);
+    }
+  } catch (error) {
+    if (error.code !== 'ENOENT' && !(error instanceof SyntaxError)) throw error;
+  }
+
+  const deleted = [];
+  for (const entry of eligible.slice(keep)) {
+    if (guard.has(entry.folder)) continue;
+    // Re-validate before removal; never remove partial or manually changed runs.
+    if (!(await completeRunIsSafeToRemove(entry.folder))) continue;
+    await fs.rm(entry.folder, { recursive: true, force: false });
+    deleted.push(entry.name);
+  }
+  return deleted;
+}
+
 module.exports = {
   motionLabRoot, beginMotionLab, writeMotionLabImage, completeMotionLab, galleryHtml,
-  MAX_IMAGE_BYTES, MAX_SESSION_BYTES, IMAGE_NAME
+  MAX_IMAGE_BYTES, MAX_SESSION_BYTES, IMAGE_NAME,
+  pruneMotionLabRuns, MOTION_LAB_KEEP_RUNS
 };
