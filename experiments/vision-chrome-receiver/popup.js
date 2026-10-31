@@ -199,6 +199,8 @@ const sendErrorMessages = {
   'existing-draft': '未送信の内容があります。誤送信防止のため中止しました',
   'composer-disappeared': 'ChatGPTの入力欄が変化したため送信しませんでした',
   'text-added': '送信直前に文章を検出したため送信しませんでした',
+  'other-attachment-added': '送信直前に別の添付を検出したため送信しませんでした',
+  'conversation-changed': '送信先の会話が変更されたため送信しませんでした',
   'attachment-not-ready': '添付完了を確認できず送信しませんでした。ChatGPTの入力欄をご確認ください'
 };
 
