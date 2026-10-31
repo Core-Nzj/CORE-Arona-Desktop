@@ -59,9 +59,13 @@ test('manual blend can override the pose heuristic while warp always wins if sel
   assert.equal(decide(clip(same), clip(same), { mode: 'warp' }).method, 'warp');
 });
 
-test('short source tail, insufficient target and finished preview use teleport', () => {
-  assert.equal(decide(clip(same), clip(same), { mode: 'blend', fromFrame: 115 }).method, 'warp');
-  assert.equal(decide(clip(same), clip(same, 9), { mode: 'blend' }).method, 'warp');
+test('single-pose and short VMDs can blend using their held edge poses', () => {
+  assert.equal(decide(clip(same), clip(same), { mode: 'blend', fromFrame: 115 }).method, 'blend');
+  assert.equal(decide(clip(same), clip(same, 9), { mode: 'blend' }).method, 'blend');
+  assert.equal(decide(clip(same), clip(same, 0), { mode: 'auto' }).method, 'blend');
+});
+
+test('completed previews and unavailable animations keep the teleport fallback', () => {
   assert.equal(decide(clip(same), clip(same), { mode: 'auto', isAutomaticReturn: true }).method, 'warp');
   assert.equal(decide(null, clip(same), { mode: 'blend' }).method, 'warp');
 });
