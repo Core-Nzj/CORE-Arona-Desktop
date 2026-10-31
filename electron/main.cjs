@@ -6,6 +6,8 @@ const path = require('node:path');
 const { resolveAssetPath } = require('./asset-path.cjs');
 const { scanMotionLibrary, readMotionFile } = require('./motion-library.cjs');
 const { FramePluginHost } = require('./plugin-host.cjs');
+const { VisionSessionBroker } = require('./vision-session-broker.cjs');
+const { VisionLocalAdapter, LOCAL_DESTINATION_ID } = require('./vision-local-adapter.cjs');
 const {
   BASE_WIDTH, BASE_HEIGHT, INITIAL_SCALE, MIN_SCALE, ZOOM_IN_FACTOR,
   clampScale, resolveZoomScale, startupScaleForArea, windowSizeForScale, boundsForScale
@@ -113,6 +115,8 @@ let voicePlaybackStatus = 'テスト再生はまだ実行されていません';
 let speechBridge = null;
 let speechBridgeError = '';
 let pluginHost = null;
+// In-process only; no listeners or network connections are opened.
+const visionBroker = new VisionSessionBroker({ adapter: new VisionLocalAdapter() });
 
 function isSettingsWindow(event) {
   return settingsWindow && !settingsWindow.isDestroyed() &&
@@ -758,7 +762,11 @@ function menuState() {
       executableSet: !!voisonaPrefs.executable
     },
     emotion: { selected: emotionState.selected, available: emotionState.available },
-    plugins: pluginHost?.state() || { entries: [], windows: [], message: 'プラグイン未初期化' }
+    plugins: pluginHost?.state() || { entries: [], windows: [], message: 'プラグイン未初期化' },
+    visionShare: {
+      session: visionBroker.getState(),
+      destination: visionBroker.getCapabilities()
+    }
   };
 }
 
@@ -782,6 +790,7 @@ function finishMenuHide(generation) {
 
 function closeAvatarMenu(force = false) {
   ++menuCaptureGeneration;
+  visionBroker.revoke();
   pluginHost?.clearCapture();
   finishMenuResize();
   if (!menuWindow || menuWindow.isDestroyed()) return;
@@ -856,6 +865,7 @@ function createAvatarMenuWindow() {
     if (menuResize?.window === popup) menuResize = null;
     if (menuWindow === popup) {
       ++menuCaptureGeneration;
+      visionBroker.revoke();
       pluginHost?.clearCapture();
       menuWindow = null;
       menuPrepared = false;
@@ -1011,17 +1021,20 @@ async function executeMenuAction(action, value) {
     }
     case 'plugin.refresh':
       if (!pluginHost) throw new Error('プラグイン基盤は未初期化です');
+      visionBroker.revoke();
       await pluginHost.refresh();
       return pluginHost.message;
     case 'plugin.toggle': {
       if (!pluginHost) throw new Error('プラグイン基盤は未初期化です');
       const item = pluginHost.state().entries.find(entry => entry.id === value);
       if (!item) throw new Error('指定されたプラグインはありません');
+      visionBroker.revoke();
       await pluginHost.setEnabled(item.id, !item.enabled);
       return (item.enabled ? '無効化しました: ' : '利用を許可しました: ') + item.name;
     }
     case 'plugin.listWindows': {
       if (!pluginHost) throw new Error('プラグイン基盤は未初期化です');
+      visionBroker.revoke();
       const windows = await pluginHost.listWindows(value);
       return 'ウィンドウを' + windows.length + '件取得しました（ローカル表示のみ）';
     }
@@ -1031,6 +1044,7 @@ async function executeMenuAction(action, value) {
       try { selected = JSON.parse(value); } catch { throw new Error('撮影対象が不正です'); }
       if (!selected || typeof selected.pluginId !== 'string' ||
           typeof selected.windowId !== 'string') throw new Error('撮影対象が不正です');
+      visionBroker.revoke(); // Every new image requires fresh consent.
       const generation = menuCaptureGeneration;
       const image = await pluginHost.captureWindow(selected.pluginId, selected.windowId);
       // A pending capture must not repopulate a closed or reopened panel.
@@ -1038,11 +1052,56 @@ async function executeMenuAction(action, value) {
         pluginHost.clearCapture();
         throw new Error('設定画面を閉じたため撮影画像を破棄しました');
       }
+      let decoded;
+      try {
+        // Plugin host has already validated PNG contents and target PID.
+        decoded = Buffer.from(image.dataUrl.slice('data:image/png;base64,'.length), 'base64');
+        const pending = visionBroker.begin({
+          source: 'frame.menu',
+          target: { pluginId: selected.pluginId, windowId: selected.windowId, pid: image.pid },
+          destinationId: LOCAL_DESTINATION_ID
+        });
+        visionBroker.capture(pending.requestId, decoded);
+      } catch (error) {
+        visionBroker.revoke();
+        pluginHost.clearCapture();
+        throw error;
+      } finally {
+        decoded?.fill(0);
+      }
       return image.title + ' を撮影しました（ローカルのみ、保存なし）';
     }
     case 'plugin.clearCapture':
+      visionBroker.revoke();
       pluginHost?.clearCapture();
       return '撮影画像を消去しました';
+    case 'vision.revoke':
+      visionBroker.revoke();
+      return '画像の共有を取り消しました（プレビューは維持）';
+    case 'vision.deliverLocal': {
+      // Only the authorized menu IPC may reach this handler.
+      if (!menuWindow || menuWindow.isDestroyed() || !menuWindow.isVisible() || menuClosing) {
+        throw new Error('設定画面が開いている間だけ受け渡しできます');
+      }
+      let request;
+      try { request = JSON.parse(value); } catch { throw new Error('送信要求が不正です'); }
+      if (!request || typeof request.requestId !== 'string' ||
+          request.destinationId !== LOCAL_DESTINATION_ID || request.userConfirmed !== true) {
+        throw new Error('画像と送信先を確認し、明示的に許可してください');
+      }
+      const session = visionBroker.getState();
+      if (!session || session.status !== 'captured' ||
+          session.requestId !== request.requestId ||
+          !pluginHost?.state().capture) {
+        throw new Error('画像が存在しないか、すでに受け渡し済みです。再撮影してください');
+      }
+      visionBroker.approve({
+        requestId: request.requestId, destinationId: request.destinationId,
+        userConfirmed: true
+      });
+      await visionBroker.deliver(request.requestId);
+      return 'FRAME内部の検証先が画像を1回受領しました（ChatGPTには未送信）';
+    }
     case 'voice.settings':
       openVoiceSettings();
       return '接続設定を開きました';
