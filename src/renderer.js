@@ -663,7 +663,113 @@ async function playImportedMotion({ name, bytes }, asIdle = false, animate = tru
   }
 }
 
+// Stop native travel before any other VMD transition begins. The walk VMD
+// handle stays cached, so switching away and back does not repeatedly parse it.
+function stopWalkingWithoutRestore() {
+  window.aronaDesktop.setWalkVelocity(0, 0);
+  walkingMotion = null;
+}
+
+async function startWalking(direction) {
+  if (![-1, 1].includes(direction) || !activeMmdModel || !activeRoot ||
+      !idleAnimationHandle || exitWarpStarted) {
+    reportIdle('歩行を開始できません: モデルと足IKを確認してください');
+    return;
+  }
+  if (walkingMotion?.direction === direction) return;
+  stopWalkingWithoutRestore();
+  const model = activeMmdModel;
+  const requestId = ++motionRequestId;
+  await queueMotionTransition(async () => {
+    if (requestId !== motionRequestId || model !== activeMmdModel || exitWarpStarted) return;
+    const previous = activeImportedMotion;
+    isChangingMotion = true;
+    try {
+      let cached = cachedWalkAnimations.get(direction);
+      if (!cached) {
+        const bounds = activeRoot.getHierarchyBoundingVectors(true);
+        const height = bounds.max.y - bounds.min.y;
+        const created = buildWalkingVmd({
+          boneNames: model.runtimeBones.map(bone => bone.name),
+          modelHeight: height,
+          direction
+        });
+        const animation = await idleLoader.loadFromBufferAsync(
+          direction < 0 ? 'FRAME Walk Left' : 'FRAME Walk Right', created.buffer);
+        if (requestId !== motionRequestId || model !== activeMmdModel || exitWarpStarted) return;
+        const handle = model.createRuntimeAnimation(animation);
+        cached = { handle, animation, stride: created.stride, endFrame: WALK_FRAMES };
+        cachedWalkAnimations.set(direction, cached);
+      }
+      // The screen width is measured in Electron DIP, not MMD world units.
+      // Match walking distance to the stance phase of the foot-IK tracks.
+      const worldHeight = 2 * camera.radius * Math.tan(camera.fov / 2);
+      const pixelsPerUnit = window.innerHeight / Math.max(worldHeight, 0.01);
+      const speed = Math.min(300, Math.max(25,
+        walkTravelSpeed(cached.stride, pixelsPerUnit)));
+      await switchMotionWithPolicy(requestId, model, cached.animation, async startFrame => {
+        if (requestId !== motionRequestId || model !== activeMmdModel || exitWarpStarted) return;
+        model.setRuntimeAnimation(cached.handle);
+        currentMotionHandle = cached.handle;
+        currentMotionAnimation = cached.animation;
+        mmdRuntime.setManualAnimationDuration(cached.endFrame);
+        await mmdRuntime.seekAnimation(startFrame, true);
+        if (requestId !== motionRequestId || model !== activeMmdModel || exitWarpStarted) return;
+        await mmdRuntime.playAnimation();
+        activeImportedMotion = null;
+        walkingMotion = { ...cached, direction };
+        if (previous) model.destroyRuntimeAnimation(previous.handle);
+        window.aronaDesktop.setWalkVelocity(direction, speed);
+        reportIdle(direction < 0 ? '左へ歩行中（足IK同期）' : '右へ歩行中（足IK同期）');
+      });
+    } catch (error) {
+      stopWalkingWithoutRestore();
+      if (requestId === motionRequestId && model === activeMmdModel) {
+        reportIdle('歩行を開始できません: ' + String(error?.message ?? error));
+        const target = customIdleMotion ||
+          { handle: idleAnimationHandle, animation: idleSourceAnimation, endFrame: IDLE_FRAMES };
+        try {
+          model.setRuntimeAnimation(target.handle);
+          currentMotionHandle = target.handle;
+          currentMotionAnimation = target.animation;
+          mmdRuntime.setManualAnimationDuration(target.endFrame);
+          await mmdRuntime.seekAnimation(0, true);
+          await mmdRuntime.playAnimation();
+          activeImportedMotion = null;
+          if (previous) model.destroyRuntimeAnimation(previous.handle);
+        } catch (restoreError) {
+          console.warn('[FRAME walk] unable to restore idle', restoreError);
+        }
+      }
+    } finally {
+      isChangingMotion = false;
+    }
+  });
+}
+
+function stopWalkingAndRestore() {
+  if (!walkingMotion) {
+    // A walk may still be waiting on a transfer; invalidate that request.
+    ++motionRequestId;
+    window.aronaDesktop.setWalkVelocity(0, 0);
+    return;
+  }
+  stopWalkingWithoutRestore();
+  const requestId = ++motionRequestId;
+  void returnToIdle(requestId, '歩行停止: 待機モーションに戻りました')
+    .catch(error => reportIdle('歩行停止に失敗: ' + String(error?.message ?? error)));
+}
+
 function onMotionCommand(command) {
+  if (command?.type === 'walk') {
+    void startWalking(command.direction);
+    return;
+  }
+  if (command?.type === 'walk-stop') {
+    stopWalkingAndRestore();
+    return;
+  }
+  if (walkingMotion) stopWalkingWithoutRestore();
   if (command?.type === 'play') {
     void playImportedMotion(command);
   } else if (command?.type === 'idle') {
@@ -895,6 +1001,9 @@ window.aronaDesktop.onCameraZoom(factor => {
 });
 window.aronaDesktop.onEmotionChange(setEmotion);
 window.aronaDesktop.onMotionCommand(onMotionCommand);
+window.aronaDesktop.onWalkStopped(() => {
+  if (walkingMotion) stopWalkingAndRestore();
+});
 window.aronaDesktop.onPrepareQuit(() => {
   if (exitWarpStarted) return;
   exitWarpStarted = true;
