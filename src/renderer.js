@@ -931,7 +931,14 @@ async function loadModel(model, { startup = false } = {}) {
       if (seq === loadSequence && restoreAfterRequest === motionRequestId && motion) {
         return playImportedMotion(motion, true, false);
       }
-    }).catch(error => console.warn('[CORE motion] idle restore failed:', error));
+    }).catch(error => console.warn('[CORE motion] idle restore failed:', error))
+      .finally(() => {
+        // Developer CLI captures are queued until the actual MMD and its
+        // chosen idle animation are ready, not merely until DOM load.
+        if (seq === loadSequence && activeMmdModel && !exitWarpStarted) {
+          window.aronaDesktop.motionLabReady();
+        }
+      });
   } catch (error) {
     if (seq === loadSequence) {
       // A failed startup must reveal the normal chooser/error panel.
