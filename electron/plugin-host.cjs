@@ -9,9 +9,12 @@ const { promisify } = require('node:util');
 const execFileAsync = promisify(execFile);
 const PLUGIN_TYPE = 'frame.windows-list.v1';
 const PLUGIN_ENTRY = 'list-windows.ps1';
+const CAPTURE_ENTRY = 'capture-window.ps1';
 const MAX_PLUGINS = 32;
 const MAX_WINDOWS = 100;
 const MAX_OUTPUT = 256 * 1024;
+const MAX_CAPTURE_OUTPUT = 12 * 1024 * 1024;
+const MAX_PNG_BYTES = 8 * 1024 * 1024;
 
 function normalizeManifest(raw, directoryName) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
@@ -20,9 +23,16 @@ function normalizeManifest(raw, directoryName) {
   if (raw.apiVersion !== 1 || raw.type !== PLUGIN_TYPE ||
       raw.entry !== PLUGIN_ENTRY) return null;
   if (typeof raw.name !== 'string' || raw.name.length < 1 || raw.name.length > 80) return null;
-  if (!Array.isArray(raw.permissions) || raw.permissions.length !== 1 ||
-      raw.permissions[0] !== 'window-titles') return null;
-  return { id: raw.id, name: raw.name, type: raw.type, permissions: ['window-titles'] };
+  if (!Array.isArray(raw.permissions) || raw.permissions[0] !== 'window-titles') return null;
+  const captureEnabled = raw.permissions.length === 2 &&
+    raw.permissions[1] === 'window-capture' && raw.captureEntry === CAPTURE_ENTRY;
+  const listOnly = raw.permissions.length === 1 && raw.captureEntry === undefined;
+  if (!captureEnabled && !listOnly) return null;
+  return {
+    id: raw.id, name: raw.name, type: raw.type,
+    permissions: captureEnabled ? ['window-titles', 'window-capture'] : ['window-titles'],
+    captureEnabled
+  };
 }
 
 function normalizeWindows(value) {
@@ -36,11 +46,14 @@ function normalizeWindows(value) {
   });
 }
 
+function powershellExecutable() {
+  return path.join(process.env.SystemRoot || 'C:\\Windows',
+    'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+}
+
 async function runWindowsListScript(scriptPath) {
   if (process.platform !== 'win32') throw new Error('ウィンドウ一覧取得はWindows専用です');
-  const powershell = path.join(process.env.SystemRoot || 'C:\\Windows',
-    'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
-  const { stdout } = await execFileAsync(powershell, [
+  const { stdout } = await execFileAsync(powershellExecutable(), [
     '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
     '-File', scriptPath
   ], {
@@ -52,11 +65,53 @@ async function runWindowsListScript(scriptPath) {
   return JSON.parse(stdout.replace(/^\uFEFF/, '').trim());
 }
 
+async function runCaptureScript(scriptPath, window) {
+  if (process.platform !== 'win32') throw new Error('撮影はWindows専用です');
+  const { stdout } = await execFileAsync(powershellExecutable(), [
+    '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+    '-File', scriptPath, '-WindowId', window.id, '-ProcessId', String(window.pid)
+  ], {
+    windowsHide: true,
+    timeout: 15000,
+    maxBuffer: MAX_CAPTURE_OUTPUT,
+    encoding: 'utf8'
+  });
+  return JSON.parse(stdout.replace(/^\uFEFF/, '').trim());
+}
+
+function normalizeCapture(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value) ||
+      typeof value.image !== 'string' || value.image.length > 11200000 ||
+      !/^[a-zA-Z0-9+/]+={0,2}$/.test(value.image) ||
+      value.image.length % 4 !== 0) {
+    throw new Error('PNG画像の応答形式が不正です');
+  }
+  const bytes = Buffer.from(value.image, 'base64');
+  const pngSignature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+  if (bytes.length < 33 || bytes.length > MAX_PNG_BYTES ||
+      !bytes.subarray(0, 8).equals(pngSignature) ||
+      bytes.readUInt32BE(8) !== 13 || bytes.toString('ascii', 12, 16) !== 'IHDR') {
+    throw new Error('PNG画像が不正、またはサイズ上限を超えています');
+  }
+  const width = bytes.readUInt32BE(16);
+  const height = bytes.readUInt32BE(20);
+  if (width < 1 || height < 1 || width > 4096 || height > 4096 ||
+      value.width !== width || value.height !== height ||
+      value.mode !== 'PrintWindow') {
+    throw new Error('撮影画像のサイズまたは取得方式が不正です');
+  }
+  return {
+    dataUrl: 'data:image/png;base64,' + value.image,
+    width, height, mode: value.mode
+  };
+}
+
 // Intentionally narrow first-generation plugin interface. Never load third-party
 // JavaScript into Electron's privileged main process. Scripts are user-installed,
 // run only after explicit opt-in, and must still be treated as trusted code.
 class FramePluginHost {
-  constructor({ dataDirectory, runListScript = runWindowsListScript, platform = process.platform }) {
+  constructor({ dataDirectory, runListScript = runWindowsListScript,
+    runCapture = runCaptureScript, platform = process.platform }) {
     if (typeof dataDirectory !== 'string' || !dataDirectory) {
       throw new Error('Plugin data directory is required');
     }
@@ -67,6 +122,9 @@ class FramePluginHost {
     this.approved = new Map();
     this.plugins = new Map();
     this.windows = [];
+    this.activePluginId = null;
+    this.capture = null;
+    this.runCaptureScript = runCapture;
     this.message = '未検索';
   }
 
@@ -85,6 +143,8 @@ class FramePluginHost {
 
   async refresh() {
     this.windows = [];
+    this.activePluginId = null;
+    this.capture = null;
     const next = new Map();
     let entries = [];
     try {
@@ -101,6 +161,7 @@ class FramePluginHost {
       const folder = path.join(this.root, entry.name);
       const manifestPath = path.join(folder, 'plugin.json');
       const scriptPath = path.join(folder, PLUGIN_ENTRY);
+      const capturePath = path.join(folder, CAPTURE_ENTRY);
       try {
         const [manifestStat, scriptStat] = await Promise.all([
           fs.lstat(manifestPath), fs.lstat(scriptPath)
@@ -110,9 +171,20 @@ class FramePluginHost {
         // lstat().isFile() rejects symbolic links for both files.
         const manifest = normalizeManifest(JSON.parse(await fs.readFile(manifestPath, 'utf8')), entry.name);
         if (manifest) {
-          const fingerprint = createHash('sha256')
-            .update(await fs.readFile(scriptPath)).digest('hex');
-          next.set(manifest.id, { ...manifest, scriptPath, fingerprint });
+          let fingerprint;
+          if (manifest.captureEnabled) {
+            const captureStat = await fs.lstat(capturePath);
+            if (!captureStat.isFile() || captureStat.size > 128 * 1024) continue;
+            fingerprint = createHash('sha256')
+              .update(await fs.readFile(manifestPath)).update('\0')
+              .update(await fs.readFile(scriptPath)).update('\0')
+              .update(await fs.readFile(capturePath)).digest('hex');
+          } else {
+            // Keep approvals for the original list-only v0.1 plugin valid.
+            fingerprint = createHash('sha256')
+              .update(await fs.readFile(scriptPath)).digest('hex');
+          }
+          next.set(manifest.id, { ...manifest, scriptPath, capturePath, fingerprint });
         }
       } catch {
         // Invalid plugins are never loaded or executed.
@@ -127,11 +199,13 @@ class FramePluginHost {
       directory: this.root,
       supported: this.platform === 'win32',
       message: this.message,
-      entries: [...this.plugins.values()].map(({ id, name, permissions }) => ({
-        id, name, permissions,
+      entries: [...this.plugins.values()].map(({ id, name, permissions, captureEnabled }) => ({
+        id, name, permissions, captureEnabled,
         enabled: this.approved.get(id) === this.plugins.get(id).fingerprint
       })),
-      windows: this.windows
+      activePluginId: this.activePluginId,
+      windows: this.windows,
+      capture: this.capture
     };
   }
 
@@ -142,6 +216,8 @@ class FramePluginHost {
     if (enabled) this.approved.set(id, this.plugins.get(id).fingerprint);
     else this.approved.delete(id);
     this.windows = [];
+    this.activePluginId = null;
+    this.capture = null;
     await fs.mkdir(path.dirname(this.preferencesPath), { recursive: true });
     // Store only permission choices. No windows, titles, or screenshots persist.
     await fs.writeFile(this.preferencesPath, JSON.stringify({
@@ -169,14 +245,60 @@ class FramePluginHost {
     try {
       const result = await this.runListScript(plugin.scriptPath);
       this.windows = normalizeWindows(result);
+      this.activePluginId = id;
+      this.capture = null;
       return this.windows;
     } catch (error) {
       this.windows = [];
+      this.activePluginId = null;
+      this.capture = null;
       throw new Error('ウィンドウ一覧を取得できません: ' + String(error.message).slice(0, 130));
+    }
+  }
+
+  clearCapture() {
+    this.capture = null;
+  }
+
+  async captureWindow(pluginId, windowId) {
+    this.capture = null;
+    if (this.platform !== 'win32') throw new Error('撮影はWindows専用です');
+    const plugin = typeof pluginId === 'string' ? this.plugins.get(pluginId) : null;
+    if (!plugin || !plugin.captureEnabled) throw new Error('撮影対応プラグインがありません');
+    if (this.approved.get(pluginId) !== plugin.fingerprint) {
+      throw new Error('撮影権限がありません。プラグインを再許可してください');
+    }
+    if (this.activePluginId !== pluginId) throw new Error('先にウィンドウ一覧を取得してください');
+    const target = this.windows.find(item => item.id === windowId);
+    if (!target) throw new Error('指定したウィンドウが一覧に存在しません');
+    const [manifestStat, scriptStat, captureStat] = await Promise.all([
+      fs.lstat(path.join(path.dirname(plugin.scriptPath), 'plugin.json')),
+      fs.lstat(plugin.scriptPath),
+      fs.lstat(plugin.capturePath)
+    ]);
+    if (![manifestStat, scriptStat, captureStat].every(stat =>
+      stat.isFile() && stat.size <= 128 * 1024)) {
+      throw new Error('プラグインの実行ファイルが不正です');
+    }
+    const fingerprint = createHash('sha256')
+      .update(await fs.readFile(path.join(path.dirname(plugin.scriptPath), 'plugin.json')))
+      .update('\0')
+      .update(await fs.readFile(plugin.scriptPath)).update('\0')
+      .update(await fs.readFile(plugin.capturePath)).digest('hex');
+    if (fingerprint !== plugin.fingerprint) {
+      throw new Error('プラグインが更新されています。再読み込みと再許可が必要です');
+    }
+    try {
+      const image = normalizeCapture(await this.runCaptureScript(plugin.capturePath, target));
+      this.capture = { ...image, title: target.title, pid: target.pid };
+      return this.capture;
+    } catch (error) {
+      this.capture = null;
+      throw new Error('撮影に失敗しました: ' + String(error.message).slice(0, 130));
     }
   }
 }
 
 module.exports = {
-  FramePluginHost, normalizeManifest, normalizeWindows, PLUGIN_TYPE
+  FramePluginHost, normalizeManifest, normalizeWindows, normalizeCapture, PLUGIN_TYPE
 };
