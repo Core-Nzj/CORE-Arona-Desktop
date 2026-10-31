@@ -12,7 +12,8 @@ const URL = 'https://chatgpt.com/c/frame-test';
 
 function rig({ hostname = 'chatgpt.com', text = '', existingFile = false,
   ownPng = true, sendEnabled = true, hasForm = true, url = URL,
-  newThumbnailAfter = null, uploadingFor = 0, baselineThumbnail = false } = {}) {
+  newThumbnailAfter = null, uploadingFor = 0, baselineThumbnail = false,
+  sendControl = 'testid', outsideForm = false, hiddenSend = false } = {}) {
   let clicked = 0;
   let clock = 0;
   let imageChecks = 0;
@@ -20,12 +21,18 @@ function rig({ hostname = 'chatgpt.com', text = '', existingFile = false,
     disabled: !sendEnabled,
     isConnected: true,
     getAttribute() { return null; },
+    getClientRects() { return hiddenSend ? [] : [{}]; },
     click() { clicked++; }
   };
   const textarea = { value: '' };
   const form = {
     querySelector(selector) {
-      if (selector.includes('send-button')) return sendButton;
+      if (!outsideForm && (
+        (sendControl === 'testid' && selector === 'button[data-testid="send-button"]') ||
+        (sendControl === 'id' && selector === 'button#composer-submit-button') ||
+        (sendControl === 'aria' && selector === 'button[aria-label="Send prompt"]') ||
+        (sendControl === 'submit' && selector === 'button[type="submit"]')
+      )) return sendButton;
       if (selector.includes('progressbar') || selector.includes('upload-progress')) {
         return imageChecks <= uploadingFor ? { getAttribute: () => 'loading' } : null;
       }
@@ -52,10 +59,22 @@ function rig({ hostname = 'chatgpt.com', text = '', existingFile = false,
       return [];
     }
   };
+  const outerComposer = {
+    querySelector(selector) {
+      if (sendControl === 'id' && selector === 'button#composer-submit-button') {
+        return sendButton;
+      }
+      return null;
+    }
+  };
   const editor = {
     innerText: text,
     textContent: text,
-    closest(selector) { return selector === 'form' && hasForm ? form : null; }
+    closest(selector) {
+      if (selector === 'form') return hasForm ? form : null;
+      if (selector === '[data-testid="composer"]' && outsideForm) return outerComposer;
+      return null;
+    }
   };
   const files = existingFile ? [{ name: 'previous.png', type: 'image/png' }] :
     ownPng ? [{ name: 'FRAME-vision.png', type: 'image/png' }] : [];
@@ -95,6 +114,41 @@ test('no existing draft permits an explicit image-only send', async () => {
   assert.equal(result.ok, true);
   assert.equal(result.status, 'send-clicked');
   assert.equal(after.getClicks(), 1);
+});
+
+test('send detects the newer composer-submit-button id', async () => {
+  const rigged = rig({ sendControl: 'id' });
+  const result = await rigged.funcs.frameSendPreparedImageToChatGPT(URL);
+  assert.equal(result.status, 'send-clicked');
+  assert.equal(rigged.getClicks(), 1);
+});
+
+test('send detects aria-label without a data-testid', async () => {
+  const rigged = rig({ sendControl: 'aria' });
+  const result = await rigged.funcs.frameSendPreparedImageToChatGPT(URL);
+  assert.equal(result.status, 'send-clicked');
+  assert.equal(rigged.getClicks(), 1);
+});
+
+test('send discovers button inside verified composer wrapper outside form', async () => {
+  const rigged = rig({ sendControl: 'id', outsideForm: true });
+  const result = await rigged.funcs.frameSendPreparedImageToChatGPT(URL);
+  assert.equal(result.status, 'send-clicked');
+  assert.equal(rigged.getClicks(), 1);
+});
+
+test('invisible matching button is not clicked', async () => {
+  const rigged = rig({ sendControl: 'id', hiddenSend: true });
+  const result = await rigged.funcs.frameSendPreparedImageToChatGPT(URL);
+  assert.equal(result.reason, 'attachment-not-ready');
+  assert.equal(result.diagnostics.sendButtonFound, false);
+  assert.equal(rigged.getClicks(), 0);
+});
+
+test('preflight detects an enabled send control in a new composer layout', () => {
+  const rigged = rig({ ownPng: false, sendControl: 'id', outsideForm: true });
+  assert.equal(rigged.funcs.frameVerifyEmptyChatGPTComposer().reason, 'existing-draft');
+  assert.equal(rigged.getClicks(), 0);
 });
 
 test('preflight refuses existing text and attachment', () => {
