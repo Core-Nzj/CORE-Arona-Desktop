@@ -18,8 +18,9 @@ const { SpeechBridge } = require('./speech-bridge.cjs');
 const { readSpeechText, copySpeechToken } = require('./clipboard-actions.cjs');
 const { voiceKey, globalParameters } = require('./speech-settings.cjs');
 const {
-  DEFAULT_WIDTH, DEFAULT_HEIGHT, EDGES,
-  normalizeMenuLayout, changeMenuZoom, resizeMenuBounds
+  DEFAULT_WIDTH, DEFAULT_HEIGHT, LAYOUT_VERSION, EDGES,
+  normalizeMenuLayout, restoreMenuLayout: normalizeSavedMenuLayout,
+  changeMenuZoom, resizeMenuBounds
 } = require('./menu-layout.cjs');
 
 // Desktop speech may start from a native context-menu action.
@@ -601,14 +602,15 @@ function menuLayoutFile() {
 async function restoreMenuLayout() {
   try {
     const value = JSON.parse(await fs.readFile(menuLayoutFile(), 'utf8'));
-    menuLayout = normalizeMenuLayout(value, screen.getPrimaryDisplay().workArea);
+    menuLayout = normalizeSavedMenuLayout(value, screen.getPrimaryDisplay().workArea);
+    if (value.version !== LAYOUT_VERSION) saveMenuLayout();
   } catch {
     // Missing or invalid local preferences: use defaults.
   }
 }
 
 function saveMenuLayout() {
-  const snapshot = JSON.stringify(menuLayout, null, 2);
+  const snapshot = JSON.stringify({ ...menuLayout, version: LAYOUT_VERSION }, null, 2);
   menuLayoutSave = menuLayoutSave.catch(() => {}).then(async () => {
     const destination = menuLayoutFile();
     await fs.mkdir(path.dirname(destination), { recursive: true });
