@@ -165,6 +165,27 @@
         </div>
         <p class="hint">受信先はFRAME内部のみ。外部通信・保存・ChatGPTへの送信はありません。</p>
       </div>
+      <div class="vision-browser" id="vision-browser" hidden>
+        <div class="section-title"><span>CHROME BRIDGE / EXPERIMENT</span><small id="vision-browser-status">未接続</small></div>
+        <p class="hint">研究所専用のChrome拡張へ、一枚だけ画像を渡す実験です。ChatGPTにはまだ添付しません。</p>
+        <label class="vision-share-consent">
+          <input type="checkbox" id="vision-browser-consent" disabled>
+          <span>撮影画像をChrome拡張へ受け渡すことを許可します（60秒間・1回限り）。</span>
+        </label>
+        <div class="motion-toolbar gap-small">
+          <button type="button" class="row primary" id="vision-browser-start"
+            data-action="vision.beginBrowser" disabled>Chrome受信待機を開始</button>
+          <button type="button" class="row" id="vision-browser-cancel"
+            data-action="vision.cancelBrowser" disabled>待機を取消</button>
+        </div>
+        <div id="vision-browser-code-area" hidden>
+          <p class="vision-share-label">使い捨て認証コード（画像ではありません）</p>
+          <input type="text" id="vision-browser-code" readonly aria-label="一回限りのChrome受信コード">
+          <button type="button" class="row" id="vision-browser-copy"
+            data-action="vision.copyBrowserToken">認証コードをコピー</button>
+          <p class="hint">Chrome拡張の受信画面に貼り付けてください。受信するまでFRAMEパネルは開いたままです。</p>
+        </div>
+      </div>
       <div class="note">プラグインはPC上のスクリプトを実行します。信頼できる配布元のファイルのみ導入してください。</div>
     </section>
     <section class="page" data-page="emotion" hidden>
