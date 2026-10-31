@@ -132,6 +132,7 @@ function renderState(state) {
   applyTextSize(state.textSize);
   document.getElementById('model-name').textContent = state.modelName || '未選択';
   document.getElementById('motion-status').textContent = state.motionStatus || '標準待機モーション';
+  document.getElementById('motion-lab-status').textContent = state.motionLabStatus || '未撮影';
   const library = state.motionLibrary || {};
   const entries = Array.isArray(library.entries) ? library.entries : [];
   const selected = entries.find(entry => entry.id === library.selectedId);
