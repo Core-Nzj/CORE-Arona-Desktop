@@ -58,6 +58,13 @@
         <button type="button" class="row" data-action="motion.previous">‹ 前へ</button>
         <button type="button" class="row" data-action="motion.next">次へ ›</button>
       </div>
+      <div class="section-title gap"><span>TRANSITION</span><small>モーション間の接続</small></div>
+      <div class="motion-transition-mode" role="group" aria-label="モーション切り替え方式">
+        <button type="button" class="transition-choice selected" data-action="motion.transition" data-value="auto" aria-pressed="true">自動</button>
+        <button type="button" class="transition-choice" data-action="motion.transition" data-value="blend" aria-pressed="false">ブレンド優先</button>
+        <button type="button" class="transition-choice" data-action="motion.transition" data-value="warp" aria-pressed="false">デジタル転送</button>
+      </div>
+      <p class="hint">自動：姿勢が近い場合だけ滑らかに接続。難しい組み合わせはデジタル転送します。</p>
       <button type="button" class="row" id="motion-warp-toggle" data-action="motion.warpToggle" aria-pressed="true">デジタル転送演出 ON</button>
       <p class="motion-current" id="motion-selected">選択中: なし</p>
       <div class="stack">
