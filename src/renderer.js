@@ -421,13 +421,18 @@ async function switchMotionWithWarp(requestId, model, change, animate = true) {
   }
   const completelyHiddenAt = performance.now();
   try {
-    // Change the VMD only while invisible. The hidden interval is counted
-    // from the end of disappearance, including any seek/loading overhead.
-    await change();
     if (canAnimate) {
+      // Keep the *old* pose hidden for one second before starting the next
+      // animation, so its opening frames overlap the reappearance itself.
       const remaining = remainingWarpHoldMs(completelyHiddenAt, performance.now());
       if (remaining > 0) await new Promise(resolve => setTimeout(resolve, remaining));
       if (requestId !== motionRequestId || model !== activeMmdModel || exitWarpStarted) return false;
+    }
+    // Switching at the end of the hold means we do not lose the incoming
+    // clip's first second while its owner is still invisible.
+    await change();
+    if (canAnimate && requestId === motionRequestId &&
+        model === activeMmdModel && !exitWarpStarted) {
       await bodyWarp.reveal();
     }
     return true;
