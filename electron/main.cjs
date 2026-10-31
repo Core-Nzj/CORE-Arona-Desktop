@@ -4,6 +4,7 @@ const { app, BrowserWindow, clipboard, dialog, ipcMain, protocol, screen, safeSt
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { resolveAssetPath } = require('./asset-path.cjs');
+const { scanMotionLibrary, readMotionFile } = require('./motion-library.cjs');
 const {
   BASE_WIDTH, BASE_HEIGHT, INITIAL_SCALE, MIN_SCALE,
   clampScale, windowSizeForScale, boundsForScale
@@ -69,6 +70,11 @@ let currentModelFile = null;
 let dragTimer = null;
 let dragStart = null;
 let idleDiagnostics = 'モーションの読み込みを待っています';
+let motionDirectory = null;
+let motionEntries = [];
+let motionSelectedId = null;
+let motionIdleId = null;
+let motionLibraryMessage = '未検索';
 const voiceClient = new VoiceProxyClient();
 let voiceEntries = [];
 let voiceError = '接続を確認していません';
@@ -323,6 +329,11 @@ async function restoreModelSelection() {
     if (typeof settings.voisonaAutoStart === 'boolean') voisonaPrefs.autoStart = settings.voisonaAutoStart;
     if (typeof settings.voisonaAutoHide === 'boolean') voisonaPrefs.autoHide = settings.voisonaAutoHide;
     if (typeof settings.voisonaExecutable === 'string') voisonaPrefs.executable = settings.voisonaExecutable;
+    if (typeof settings.motionDirectory === 'string' && settings.motionDirectory.length < 2048) {
+      motionDirectory = settings.motionDirectory;
+    }
+    if (typeof settings.motionIdleId === 'string') motionIdleId = settings.motionIdleId;
+    if (typeof settings.motionSelectedId === 'string') motionSelectedId = settings.motionSelectedId;
     if (typeof settings.modelPath !== 'string') return;
     if (!['.pmx', '.pmd'].includes(path.extname(settings.modelPath).toLowerCase())) return;
     const stats = await fs.stat(settings.modelPath);
@@ -340,7 +351,10 @@ async function saveModelSelection() {
     voiceName: selectedVoiceName,
     voisonaAutoStart: voisonaPrefs.autoStart,
     voisonaAutoHide: voisonaPrefs.autoHide,
-    voisonaExecutable: voisonaPrefs.executable
+    voisonaExecutable: voisonaPrefs.executable,
+    motionDirectory,
+    motionIdleId,
+    motionSelectedId
   }, null, 2), 'utf8');
 }
 
@@ -391,6 +405,49 @@ async function chooseModel() {
   resetEmotionState();
   await saveModelSelection();
   return infoForCurrentModel();
+}
+
+// The development layout keeps Motions/ beside CORE-Arona-Desktop/.
+async function refreshMotionLibrary() {
+  const suggestions = motionDirectory ? [motionDirectory] : [
+    path.resolve(app.getAppPath(), '..', 'Motions'),
+    path.resolve(process.cwd(), '..', 'Motions'),
+    path.resolve(path.dirname(app.getPath('exe')), 'Motions')
+  ];
+  let lastError = null;
+  for (const candidate of new Set(suggestions)) {
+    try {
+      const result = await scanMotionLibrary(candidate);
+      motionDirectory = result.root;
+      motionEntries = result.entries;
+      if (!motionEntries.some(entry => entry.id === motionSelectedId)) motionSelectedId = null;
+      motionLibraryMessage = motionEntries.length + '件を検出' +
+        (result.capped ? '（上限に達しました）' : '');
+      return;
+    } catch (error) { lastError = error; }
+  }
+  motionEntries = [];
+  motionLibraryMessage = motionDirectory
+    ? '指定フォルダを開けません: ' + String(lastError?.message || lastError)
+    : 'Motionsフォルダがありません。フォルダを指定してください';
+}
+
+function libraryEntry(id) {
+  const entry = motionEntries.find(item => item.id === id);
+  if (!entry || !motionDirectory) throw new Error('一覧にないモーションです。再検索してください');
+  return entry;
+}
+
+async function readLibraryMotion(id) {
+  libraryEntry(id);
+  return readMotionFile(motionDirectory, id);
+}
+
+async function previewLibraryMotion(id) {
+  const motion = await readLibraryMotion(id);
+  motionSelectedId = id;
+  mainWindow.webContents.send('avatar:motion-command', { type: 'play', ...motion });
+  return 'プレビュー: ' + motion.name;
 }
 
 async function chooseMotionFile() {
@@ -589,6 +646,13 @@ function menuState() {
   return {
     modelName: currentModelFile ? path.basename(currentModelFile) : '未選択',
     motionStatus: idleDiagnostics.split('\n')[0],
+    motionLibrary: {
+      directory: motionDirectory || '',
+      entries: motionEntries,
+      selectedId: motionSelectedId,
+      idleId: motionIdleId,
+      message: motionLibraryMessage
+    },
     voices: voiceEntries.map(v => ({
       name: v.voice_name,
       selected: v.voice_name === selectedVoiceName
@@ -696,7 +760,57 @@ async function executeMenuAction(action, value) {
     }
     case 'motion.stop':
       mainWindow.webContents.send('avatar:motion-command', { type: 'stop' });
-      return '標準待機モーションへ戻します';
+      return '待機モーションへ戻します';
+    case 'motion.folder': {
+      const selection = await dialog.showOpenDialog(mainWindow, {
+        title: 'Motionsの保存先を選択',
+        buttonLabel: 'ライブラリとして使用',
+        properties: ['openDirectory']
+      });
+      if (selection.canceled || !selection.filePaths.length) return '選択をキャンセルしました';
+      const previous = motionDirectory;
+      motionDirectory = selection.filePaths[0];
+      await refreshMotionLibrary();
+      if (motionEntries.length === 0 && motionLibraryMessage.startsWith('指定フォルダを開けません')) {
+        motionDirectory = previous;
+        await refreshMotionLibrary();
+        throw new Error('フォルダを読み込めませんでした');
+      }
+      if (previous !== motionDirectory) {
+        motionSelectedId = null;
+        motionIdleId = null;
+        mainWindow.webContents.send('avatar:motion-command', { type: 'reset-idle' });
+      }
+      await saveModelSelection();
+      return motionLibraryMessage;
+    }
+    case 'motion.refresh':
+      await refreshMotionLibrary();
+      return motionLibraryMessage;
+    case 'motion.preview':
+      return previewLibraryMotion(value);
+    case 'motion.next': case 'motion.previous': {
+      if (!motionEntries.length) throw new Error('再生できるVMDがありません');
+      const offset = action === 'motion.next' ? 1 : -1;
+      const index = motionEntries.findIndex(entry => entry.id === motionSelectedId);
+      const target = motionEntries[(index < 0
+        ? (offset === 1 ? 0 : motionEntries.length - 1)
+        : (index + offset + motionEntries.length) % motionEntries.length)];
+      return previewLibraryMotion(target.id);
+    }
+    case 'motion.setIdle': {
+      if (!motionSelectedId) throw new Error('先にモーションを選択してください');
+      const motion = await readLibraryMotion(motionSelectedId);
+      motionIdleId = motionSelectedId;
+      await saveModelSelection();
+      mainWindow.webContents.send('avatar:motion-command', { type: 'idle', ...motion });
+      return '待機モーションに設定しました: ' + motion.name;
+    }
+    case 'motion.resetIdle':
+      motionIdleId = null;
+      await saveModelSelection();
+      mainWindow.webContents.send('avatar:motion-command', { type: 'reset-idle' });
+      return '標準待機モーションへ戻しました';
     case 'voice.settings':
       openVoiceSettings();
       return '接続設定を開きました';
@@ -861,10 +975,19 @@ function createWindow() {
 
 app.whenReady().then(async () => {
   await restoreModelSelection();
+  await refreshMotionLibrary();
   await restoreMenuLayout();
   protocol.handle(SCHEME, handleModelAsset);
 
   ipcMain.handle('avatar:current', () => infoForCurrentModel());
+  ipcMain.handle('avatar:motion-restore', async event => {
+    if (!isOurWindow(event) || !motionIdleId || !motionDirectory) return null;
+    try { return await readLibraryMotion(motionIdleId); }
+    catch (error) {
+      console.warn('[CORE motion] saved idle unavailable:', error);
+      return null;
+    }
+  });
   ipcMain.handle('avatar:choose', async event => {
     if (!mainWindow || event.sender !== mainWindow.webContents) throw new Error('Unauthorized window');
     return chooseModel();
