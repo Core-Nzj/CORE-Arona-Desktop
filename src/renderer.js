@@ -441,10 +441,12 @@ async function playImportedMotion({ name, bytes }) {
     if (!boneMatches && !morphMatches) {
       throw new Error('このモデルに対応するボーン・モーフがありません');
     }
-    const endFrame = animation.endFrame;
-    if (!Number.isFinite(endFrame) || endFrame < 1 || endFrame > 18000) {
+    const sourceEndFrame = animation.endFrame;
+    if (!Number.isFinite(sourceEndFrame) || sourceEndFrame < 0 || sourceEndFrame > 18000) {
       throw new Error('モーションの長さが不正です（10分以内のVMDを選択）');
     }
+    // Single-pose and very short VMD clips need enough screen time to be seen.
+    const endFrame = Math.max(90, sourceEndFrame);
 
     await queueMotionTransition(async () => {
       if (requestId !== motionRequestId || model !== activeMmdModel || !idleAnimationHandle) return;
