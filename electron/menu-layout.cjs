@@ -10,6 +10,25 @@ const MIN_HEIGHT = 320;
 const WINDOW_MARGIN = 12;
 const ZOOM_LEVELS = Object.freeze([0.75, 0.8, 0.9, 1, 1.1, 1.2, 1.3, 1.4, 1.5]);
 const EDGES = new Set(['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw']);
+const TEXT_SIZE_VERSION = 2;
+const DEFAULT_TEXT_SIZE = 100;
+const TEXT_SIZE_STEP = 5;
+const MAX_TEXT_SIZE = 200;
+const OLD_TEXT_SIZE_BASELINE = 160;
+
+function normalizeTextSize(value) {
+  if (!Number.isFinite(value)) return DEFAULT_TEXT_SIZE;
+  return Math.round(clamp(value, 0, MAX_TEXT_SIZE) / TEXT_SIZE_STEP) * TEXT_SIZE_STEP;
+}
+
+function restoreTextSize(preferences) {
+  if (!preferences || !Number.isFinite(preferences.textSize)) return DEFAULT_TEXT_SIZE;
+  if (preferences.textSizeVersion === TEXT_SIZE_VERSION) {
+    return normalizeTextSize(preferences.textSize);
+  }
+  // The old UI used 160% at the size that is now called 100%.
+  return normalizeTextSize(preferences.textSize * 100 / OLD_TEXT_SIZE_BASELINE);
+}
 
 function clamp(value, min, max) {
   return Math.min(Math.max(value, min), Math.max(min, max));
@@ -72,5 +91,6 @@ function resizeMenuBounds(bounds, origin, pointer, edge, workArea) {
 
 module.exports = {
   DEFAULT_WIDTH, DEFAULT_HEIGHT, MIN_WIDTH, MIN_HEIGHT, LAYOUT_VERSION,
-  EDGES, normalizeMenuLayout, restoreMenuLayout, changeMenuZoom, resizeMenuBounds
+  EDGES, normalizeMenuLayout, restoreMenuLayout, changeMenuZoom, resizeMenuBounds,
+  TEXT_SIZE_VERSION, DEFAULT_TEXT_SIZE, normalizeTextSize, restoreTextSize
 };

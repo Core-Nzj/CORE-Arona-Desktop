@@ -2,7 +2,7 @@
    Design tokens: DESIGN.md, tokens.json, variables.css (Project sources).
    Windows window controls, including the close button, sit on the right. */
 :root {
-  --text-scale: 1.15;
+  --text-scale: 1.6;
   color-scheme: dark;
   font-family: "SF Pro Text", Inter, "Segoe UI", "Yu Gothic UI", sans-serif;
   font-size: calc(12px * var(--text-scale));
@@ -81,7 +81,9 @@ h1 { margin: 5px 0 3px; color: #f5f5f7; font-size: calc(23px * var(--text-scale)
 .heading p { margin: 0; color: #a1a1a6; font-size: calc(11px * var(--text-scale)); }
 .tabs {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0,1fr));
+  grid-template-columns: repeat(5, minmax(max-content,1fr));
+  overflow-x: auto;
+  scrollbar-width: thin;
   gap: 2px;
   margin: 0 15px 9px;
   padding: 3px;
@@ -99,6 +101,8 @@ h1 { margin: 5px 0 3px; color: #f5f5f7; font-size: calc(23px * var(--text-scale)
   color: #a1a1a6;
   font-size: calc(11px * var(--text-scale));
   font-weight: 500;
+  padding-inline: 8px;
+  white-space: nowrap;
   cursor: pointer;
 }
 .tab.selected { background: #3b3b3e; color: #f5f5f7; box-shadow: 0 1px 3px rgba(0,0,0,.3); }
@@ -183,6 +187,7 @@ h1 { margin: 5px 0 3px; color: #f5f5f7; font-size: calc(23px * var(--text-scale)
   display: flex;
   align-items: center;
   gap: 8px;
+  overflow-wrap: anywhere;
   width: 100%;
   min-width: 0;
   min-height: 38px;
@@ -229,7 +234,7 @@ h1 { margin: 5px 0 3px; color: #f5f5f7; font-size: calc(23px * var(--text-scale)
 .connection i.online { background: #30c76a; }
 .stack { display: grid; gap: 6px; }
 .voice-manager-grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 6px; }
-.voice-manager-grid .row { justify-content: center; min-height: 35px; padding: 7px 4px; font-size: calc(10px * var(--text-scale)); white-space: nowrap; }
+.voice-manager-grid .row { justify-content: center; min-height: 35px; padding: 7px 4px; font-size: calc(10px * var(--text-scale)); white-space: normal; overflow-wrap: anywhere; }
 .voice-manager-grid .row[aria-pressed="true"] { background: #263a52; border-color: #2e6595; color: #9acfff; }
 .options { display: grid; gap: 5px; }
 .voice-options { max-height: 115px; overflow-y: auto; padding-right: 3px; }
@@ -263,6 +268,25 @@ footer .pulse { flex: none; width: 6px; height: 6px; border-radius: 50%; backgro
 #feedback { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #feedback.error { color: #ff7777; }
 
+/* A permanent 0% recovery action remains visible in any tab. */
+.text-size-recover {
+  display: none;
+  margin-left: auto;
+  margin-right: 10px;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: #2997ff;
+  font-size: 11px;
+  cursor: pointer;
+  app-region: no-drag;
+  -webkit-app-region: no-drag;
+}
+html.text-size-zero .text-size-recover { display: block; }
+html.text-size-zero .titlebar-close { margin-left: 0; }
+.text-size-recover:hover { color: #74bcff; background: rgba(41,151,255,.09); }
+
 /* Only typography is scaled. Track, thumb and panel geometry stay fixed. */
 .text-size-control {
   padding: 12px;
@@ -271,8 +295,8 @@ footer .pulse { flex: none; width: 6px; height: 6px; border-radius: 50%; backgro
   background: #272729;
 }
 .text-size-heading, .text-size-ends { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.text-size-heading label { color: #f5f5f7; font-size: calc(11px * var(--text-scale)); font-weight: 600; }
-#text-size-value { color: #dceeff; font-size: calc(12px * var(--text-scale)); font-weight: 600; font-variant-numeric: tabular-nums; }
+.text-size-heading label { color: #f5f5f7; font-size: 12px; font-weight: 600; }
+#text-size-value { color: #dceeff; font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
 #text-size {
   display: block;
   appearance: none;
@@ -300,22 +324,20 @@ footer .pulse { flex: none; width: 6px; height: 6px; border-radius: 50%; backgro
   box-shadow: 0 1px 3px rgba(0,0,0,.4);
 }
 #text-size:focus-visible { outline: 2px solid #2997ff; outline-offset: 3px; border-radius: 6px; }
-.text-size-ends { margin-top: 1px; color: #86868b; font-size: calc(10px * var(--text-scale)); }
+.text-size-ends { margin-top: 1px; color: #86868b; font-size: 10px; }
 .text-size-reset {
   margin-top: 10px;
   padding: 4px 0;
   border: 0;
   background: transparent;
   color: #2997ff;
-  font-size: calc(10px * var(--text-scale));
+  font-size: 11px;
   cursor: pointer;
 }
 .text-size-reset:hover { color: #74bcff; text-decoration: underline; }
 .text-size-reset:focus-visible { outline: 2px solid #2997ff; outline-offset: 3px; border-radius: 3px; }
 @media (max-width: 385px) {
-  .tabs { overflow-x: auto; grid-template-columns: repeat(5, minmax(max-content, 1fr)); }
-  .tab { padding-inline: 8px; white-space: nowrap; }
-  .voice-manager-grid .row { white-space: normal; }
+  .tab { padding-inline: 8px; }
 }
 
 /* Transparent windows do not expose a reliable native resize border.

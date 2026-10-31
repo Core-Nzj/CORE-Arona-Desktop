@@ -20,7 +20,8 @@ const { voiceKey, globalParameters } = require('./speech-settings.cjs');
 const {
   DEFAULT_WIDTH, DEFAULT_HEIGHT, LAYOUT_VERSION, EDGES,
   normalizeMenuLayout, restoreMenuLayout: normalizeSavedMenuLayout,
-  changeMenuZoom, resizeMenuBounds
+  changeMenuZoom, resizeMenuBounds,
+  TEXT_SIZE_VERSION, DEFAULT_TEXT_SIZE, normalizeTextSize, restoreTextSize
 } = require('./menu-layout.cjs');
 
 // Desktop speech may start from a native context-menu action.
@@ -69,7 +70,16 @@ let settingsWindow = null;
 let menuWindow = null;
 let motionFolderDialogOpen = false;
 let menuLayout = { width: DEFAULT_WIDTH, height: DEFAULT_HEIGHT, zoom: 1 };
-let menuTextSize = 115;
+let menuTextSize = DEFAULT_TEXT_SIZE;
+// Session-only navigation state. Closing FRAME clears this automatically.
+const MENU_TABS = ['home', 'motion', 'voice', 'emotion', 'status'];
+const MENU_TAB_SET = new Set(MENU_TABS);
+let menuViewState = {
+  tab: 'home',
+  scroll: Object.fromEntries(MENU_TABS.map(tab => [tab, 0])),
+  motionList: 0,
+  voiceList: 0
+};
 let menuResize = null;
 let menuLayoutSave = Promise.resolve();
 const proxyManager = new ProxyManager();
@@ -608,17 +618,20 @@ async function restoreMenuLayout() {
   try {
     const value = JSON.parse(await fs.readFile(menuLayoutFile(), 'utf8'));
     menuLayout = normalizeSavedMenuLayout(value, screen.getPrimaryDisplay().workArea);
-    if (Number.isInteger(value.textSize) && value.textSize >= 70 && value.textSize <= 160 && value.textSize % 5 === 0) {
-      menuTextSize = value.textSize;
+    menuTextSize = restoreTextSize(value);
+    if (value.version !== LAYOUT_VERSION || value.textSizeVersion !== TEXT_SIZE_VERSION) {
+      saveMenuLayout();
     }
-    if (value.version !== LAYOUT_VERSION) saveMenuLayout();
   } catch {
     // Missing or invalid local preferences: use defaults.
   }
 }
 
 function saveMenuLayout() {
-  const snapshot = JSON.stringify({ ...menuLayout, textSize: menuTextSize, version: LAYOUT_VERSION }, null, 2);
+  const snapshot = JSON.stringify({
+    ...menuLayout, textSize: menuTextSize,
+    textSizeVersion: TEXT_SIZE_VERSION, version: LAYOUT_VERSION
+  }, null, 2);
   menuLayoutSave = menuLayoutSave.catch(() => {}).then(async () => {
     const destination = menuLayoutFile();
     await fs.mkdir(path.dirname(destination), { recursive: true });
@@ -672,6 +685,7 @@ function menuState() {
   return {
     modelName: currentModelFile ? path.basename(currentModelFile) : '未選択',
     textSize: menuTextSize,
+    viewState: menuViewState,
     motionStatus: idleDiagnostics.split('\n')[0],
     motionWarpEnabled,
     motionTransitionMode,
@@ -1087,10 +1101,22 @@ app.whenReady().then(async () => {
   });
   ipcMain.on('avatar-menu:text-size', (event, percent) => {
     if (!isMenuWindow(event) || !Number.isInteger(percent) ||
-        percent < 70 || percent > 160 || percent % 5 !== 0) return;
+        percent !== normalizeTextSize(percent)) return;
     if (menuTextSize === percent) return;
     menuTextSize = percent;
     saveMenuLayout();
+  });
+  ipcMain.on('avatar-menu:view-state', (event, state) => {
+    if (!isMenuWindow(event) || !state || typeof state !== 'object' ||
+        !MENU_TAB_SET.has(state.tab)) return;
+    const safeScroll = value => Number.isFinite(value)
+      ? Math.round(Math.max(0, Math.min(value, 100000))) : 0;
+    menuViewState = {
+      tab: state.tab,
+      scroll: Object.fromEntries(MENU_TABS.map(tab => [tab, safeScroll(state.scroll?.[tab])])),
+      motionList: safeScroll(state.motionList),
+      voiceList: safeScroll(state.voiceList)
+    };
   });
   ipcMain.on('avatar-menu:close', event => {
     if (isMenuWindow(event)) closeAvatarMenu();

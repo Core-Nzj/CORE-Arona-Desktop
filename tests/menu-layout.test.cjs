@@ -4,6 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
   DEFAULT_WIDTH, DEFAULT_HEIGHT, LAYOUT_VERSION,
+  TEXT_SIZE_VERSION, DEFAULT_TEXT_SIZE, normalizeTextSize, restoreTextSize,
   normalizeMenuLayout, restoreMenuLayout
 } = require('../electron/menu-layout.cjs');
 
@@ -40,4 +41,22 @@ test('new settings panel fits even on small monitors', () => {
   assert.equal(result.width, DEFAULT_WIDTH);
   assert.ok(result.height <= area.height - 12);
   assert.equal(result.height, area.height - 12);
+});
+
+test('text size rebases previous 160% to new 100% and migrates saved sizes', () => {
+  assert.equal(DEFAULT_TEXT_SIZE, 100);
+  assert.equal(restoreTextSize({}), 100);
+  assert.equal(restoreTextSize({ textSize: 160 }), 100);
+  assert.equal(restoreTextSize({ textSize: 115 }), 70);
+  assert.equal(restoreTextSize({ textSize: 70 }), 45);
+  assert.equal(restoreTextSize({ textSize: 100, textSizeVersion: TEXT_SIZE_VERSION }), 100);
+});
+
+test('new text size limits remain within 0–200% at 5% increments', () => {
+  assert.equal(normalizeTextSize(-200), 0);
+  assert.equal(normalizeTextSize(999), 200);
+  assert.equal(normalizeTextSize(137), 135);
+  assert.equal(restoreTextSize({ textSize: 200, textSizeVersion: TEXT_SIZE_VERSION }), 200);
+  assert.equal(restoreTextSize({ textSize: 0, textSizeVersion: TEXT_SIZE_VERSION }), 0);
+  assert.equal(restoreTextSize({ textSize: NaN }), 100);
 });

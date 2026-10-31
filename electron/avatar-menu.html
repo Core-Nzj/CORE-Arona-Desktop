@@ -10,6 +10,7 @@
 <main class="shell" aria-label="FRAME 操作パネル">
   <div class="titlebar" aria-label="ウィンドウのタイトルバー">
     <div class="titlebar-name">FRAME</div>
+    <button type="button" id="text-size-recover" class="text-size-recover" aria-label="テキストサイズを100％に戻す">文字100％に戻す</button>
     <button type="button" id="close" class="titlebar-close" aria-label="メニューを閉じる" title="閉じる">×</button>
   </div>
   <header class="heading">
@@ -40,9 +41,9 @@
       <div class="text-size-control">
         <div class="text-size-heading">
           <label for="text-size">テキストサイズ</label>
-          <output id="text-size-value" for="text-size">115%</output>
+          <output id="text-size-value" for="text-size">100%</output>
         </div>
-        <input type="range" id="text-size" min="70" max="160" step="5" value="115">
+        <input type="range" id="text-size" min="0" max="200" step="5" value="100">
         <div class="text-size-ends"><span>小さく</span><span>大きく</span></div>
         <button type="button" class="text-size-reset" id="text-size-reset">100%にリセット</button>
       </div>
