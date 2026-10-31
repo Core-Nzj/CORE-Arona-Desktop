@@ -120,6 +120,25 @@ async function completeMotionLab(session, meta = {}) {
   };
   await fs.writeFile(path.join(session.directory, 'manifest.json'), JSON.stringify(metadata, null, 2));
   await fs.writeFile(path.join(session.directory, 'index.html'), galleryHtml(metadata,session.entries));
+  await fs.writeFile(path.join(session.directory, 'REVIEW_GUIDE.md'), [
+    '# FRAME Motion Lab / AI歩行レビュー',
+    '',
+    'この撮影はローカルでのみ行われています。モデルの画像やファイルをGitHub等へ公開しないでください。',
+    '',
+    '## 確認順序',
+    '1. index.html の左・右それぞれの正面／斜め／側面コンタクトシートを確認。',
+    '2. 同じフレーム番号 F00〜F32 を比較し、足の接地・膝の屈伸・重心・腰肩の回旋・腕振りを評価。',
+    '3. manifest.json の各コマ leftFoot/rightFoot の x / y / planted を照合。値はモデル空間であり、実際のスクリーン上の足滑り量ではありません。',
+    '4. ソース src/walk-vmd.mjs の WALK_STANCE / WALK_STRIDE_HEIGHT_RATIO / 回転クォータニオン / groove / 腕の振りを小さな単位で修正。',
+    '5. 同じモデル・撮影条件で再撮影し、新旧の同方向・同視点・同フレームを比較。姿勢改善と足滑りの悪化を切り分ける。',
+    '',
+    '## 注意',
+    '- 静止フレームの観察は実際の歩行速度・床との接触物理・動的な脚滑りの直接測定ではありません。',
+    '- 生成モーションはモデルのボーン構造に依存します。IKの位置だけでなく視覚結果を優先してください。',
+    '- ウィンドウ位置を動かす処理は electron/main.cjs、モーション評価・表示は src/renderer.js です。',
+    '- 撮影は状態を復元する設計ですが、実機動作の最終確認は必要です。',
+    ''
+  ].join('\\n'), 'utf8');
   const rel = path.relative(session.root, session.directory).replaceAll('\\','/');
   await fs.writeFile(path.join(session.root, 'latest.json'),
     JSON.stringify({ folder: rel, gallery: rel + '/index.html', manifest: rel + '/manifest.json' },null,2));
