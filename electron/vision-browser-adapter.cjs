@@ -165,7 +165,17 @@ class VisionBrowserAdapter {
     }
     const server = this.#server;
     this.#server = null;
-    if (server) await new Promise(resolve => server.close(resolve));
+    if (server) {
+      // On Windows, a remaining fetch/HTTP keep-alive socket can prevent
+      // server.close() from completing after a test or a cancelled handoff.
+      // Stop accepting connections before destroying the remaining sockets.
+      const closed = new Promise((resolve, reject) => {
+        server.close(error => error ? reject(error) : resolve());
+      });
+      server.closeIdleConnections?.();
+      server.closeAllConnections?.();
+      await closed;
+    }
   }
 }
 
