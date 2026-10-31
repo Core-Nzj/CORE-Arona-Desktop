@@ -94,6 +94,8 @@ function galleryHtml(meta, entries) {
     '</style><main><h1>FRAME / MOTION LAB</h1><p>Model: ' + label + '<br>' +
     'Deterministic 30fps VMD checkpoints F00–F32 at fixed 4-frame intervals. ' +
     'Front, three-quarter and side cameras. No screen or other app was captured.<br>' +
+    'Screenshots use neutral gray for black clothing and white hair. ' +
+    'The dashed ground line is a visual guide, not measured foot contact. ' +
     'For numeric IK foot positions, supported bones and rendering details, see ' +
     '<a href="manifest.json">manifest.json</a> and <a href="REVIEW_GUIDE.md">REVIEW_GUIDE.md</a>. ' +
     'Local private assets; do not commit these images.</p>' +
@@ -113,6 +115,14 @@ async function completeMotionLab(session, meta = {}) {
     applicationFps: Number.isFinite(meta.applicationFps) ? meta.applicationFps : null,
     modelHeight: Number.isFinite(meta.modelHeight) ? meta.modelHeight : null,
     stride: Number.isFinite(meta.stride) ? meta.stride : null,
+    captureProfile: meta.captureProfile && typeof meta.captureProfile === 'object' ? {
+      background: cleanText(meta.captureProfile.background || 'legacy / dark'),
+      cameraFov: Number.isFinite(meta.captureProfile.cameraFov) ? meta.captureProfile.cameraFov : null,
+      fixedCameraBeta: Number.isFinite(meta.captureProfile.fixedCameraBeta)
+        ? meta.captureProfile.fixedCameraBeta : null,
+      groundReference: cleanText(meta.captureProfile.groundReference || 'none'),
+      note: cleanText(meta.captureProfile.note)
+    } : { background: 'legacy / dark', groundReference: 'none' },
     bones: meta.bones && typeof meta.bones === 'object'
       ? Object.fromEntries(Object.entries(meta.bones).map(([k,v]) => [cleanText(k),cleanText(v)]))
       : {},
@@ -128,10 +138,12 @@ async function completeMotionLab(session, meta = {}) {
     '',
     '## 確認順序',
     '1. index.html の左・右それぞれの正面／斜め／側面コンタクトシートを確認。',
-    '2. 同じフレーム番号 F00〜F32 を比較し、足の接地・膝の屈伸・重心・腰肩の回旋・腕振りを評価。',
-    '3. manifest.json の各コマ leftFoot/rightFoot の x / y / planted を照合。値はモデル空間であり、実際のスクリーン上の足滑り量ではありません。',
-    '4. ソース src/walk-vmd.mjs の WALK_STANCE / WALK_STRIDE_HEIGHT_RATIO / 回転クォータニオン / groove / 腕の振りを小さな単位で修正。',
-    '5. 同じモデル・撮影条件で再撮影し、新旧の同方向・同視点・同フレームを比較。姿勢改善と足滑りの悪化を切り分ける。',
+    '2. 同じフレーム番号 F00〜F32 を比較し、足の接地・膝の屈伸・重心・腰肩の回旋・腕振りを評価。', 
+    '3. ニュートラルグレー（#969AA4）の撮影背景で黒い靴／服と白い髪の輪郭を確認。画像上部の L/R CONTACT/SWING は生成IKの予定状態。', 
+    '4. 足元の破線 GROUND REF は撮影開始時モデルの最低高さを投影した参考線であり、衝突物理で算出した床面ではありません。',
+    '5. manifest.json の各コマ leftFoot/rightFoot の x / y / planted を照合。値はモデル空間であり、実際のスクリーン上の足滑り量ではありません。',
+    '6. ソース src/walk-vmd.mjs の WALK_STANCE / WALK_STRIDE_HEIGHT_RATIO / 回転クォータニオン / groove / 腕の振りを小さな単位で修正。',
+    '7. 同じモデル・撮影条件で再撮影し、新旧の同方向・同視点・同フレームを比較。撮影条件が異なる場合は manifest.json の captureProfile を確認。',
     '',
     '## 注意',
     '- 静止フレームの観察は実際の歩行速度・床との接触物理・動的な脚滑りの直接測定ではありません。',
