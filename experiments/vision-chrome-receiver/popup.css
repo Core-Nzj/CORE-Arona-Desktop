@@ -1,0 +1,29 @@
+:root { color-scheme: dark; font-family: "Segoe UI", "Yu Gothic UI", sans-serif; }
+* { box-sizing: border-box; }
+body { width: 340px; min-height: 210px; margin: 0; padding: 16px;
+  background: #1d1d1f; color: #f5f5f7; }
+h1 { font-size: 15px; font-weight: 650; margin: 0 0 5px; }
+h2 { margin: 0 0 7px; font-size: 11px; letter-spacing: .06em; color: #c1c1c7; }
+p { color: #a1a1a6; font-size: 11px; line-height: 1.55; overflow-wrap: anywhere; }
+label { display: block; font-size: 11px; margin: 9px 0 6px; }
+#token { width: 100%; border: 1px solid #47474c; border-radius: 8px;
+  padding: 9px; background: #0e0e0e; color: #fff; font: 11px Consolas, monospace; }
+button { width: 100%; min-height: 36px; padding: 8px 10px; border: 0;
+  border-radius: 9px; background: #0071e3; color: #fff; cursor: pointer;
+  font: 12px "Segoe UI", sans-serif; }
+button:disabled { opacity: .48; cursor: default; }
+button.secondary { background: #36363a; }
+#status { min-height: 20px; }
+#preview { display: block; max-width: 100%; max-height: 180px; object-fit: contain;
+  border-radius: 9px; margin: 8px auto; background: #0e0e0e; }
+[hidden], #preview[hidden] { display: none !important; }
+#attachment-panel { margin-top: 12px; padding: 12px; border: 1px solid #44464c;
+  border-radius: 11px; background: #25272c; }
+#target { padding: 7px 8px; border: 1px solid #393e47; border-radius: 8px;
+  background: #171a1f; color: #dce8f7; }
+.confirm { display: flex; gap: 9px; align-items: flex-start; padding: 7px 0; }
+.confirm input { flex: none; margin-top: 3px; accent-color: #0071e3; }
+.confirm span { font-size: 11px; line-height: 1.55; }
+#attach-status { min-height: 22px; }
+#discard { margin-top: 9px; }
+.note { font-size: 10px; color: #85858b; }
