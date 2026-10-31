@@ -535,9 +535,9 @@ function setAvatarRegion(rects) {
   updateAvatarMousePassThrough();
 }
 
-function syncAvatarViewport() {
+function syncAvatarViewport(preferredDisplay = null) {
   if (!mainWindow || mainWindow.isDestroyed() || !avatarBounds) return;
-  const display = screen.getDisplayMatching(avatarBounds);
+  const display = preferredDisplay || screen.getDisplayMatching(avatarBounds);
   if (avatarDisplayId !== display.id) {
     avatarDisplayId = display.id;
     mainWindow.setBounds(display.bounds, false); // Covers the entire monitor including edges.
@@ -635,7 +635,7 @@ function startAvatarDrag() {
     const next = clampAvatarPosition({ ...avatarBounds, x, y }, nearest.workArea);
     if (next.x !== avatarBounds.x || next.y !== avatarBounds.y) {
       avatarBounds = next;
-      syncAvatarViewport();
+      syncAvatarViewport(nearest);
     }
   }, 16);
 }
@@ -1437,6 +1437,19 @@ app.whenReady().then(async () => {
     console.warn('[CORE Voice] encrypted settings cannot be restored:', error?.message);
   }
   createWindow();
+  const onDisplayLayoutChange = () => {
+    if (!avatarBounds || !mainWindow || mainWindow.isDestroyed()) return;
+    const center = {
+      x: avatarBounds.x + avatarBounds.width / 2,
+      y: avatarBounds.y + avatarBounds.height / 2
+    };
+    const target = screen.getDisplayNearestPoint(center);
+    avatarBounds = clampAvatarPosition(avatarBounds, target.workArea);
+    avatarDisplayId = null; // Force a new full-monitor overlay bound.
+    syncAvatarViewport(target);
+  };
+  screen.on('display-metrics-changed', onDisplayLayoutChange);
+  screen.on('display-removed', onDisplayLayoutChange);
   createAvatarMenuWindow(); // Prewarm once during startup, not on right-click.
   speechBridge = new SpeechBridge({
     userDataPath: app.getPath('userData'),
