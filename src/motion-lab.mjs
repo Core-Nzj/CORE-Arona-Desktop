@@ -24,3 +24,24 @@ export function labSheetName(direction, view) {
   }
   return 'sheet-' + (direction === -1 ? 'left' : 'right') + '-' + view + '.png';
 }
+
+
+// Size the actual silhouette, not the PMX root bounding box: some models
+// contain far-away invisible rig helpers that make camera fitting inaccurate.
+// Keep one zoom factor across all six views for comparable screenshots.
+export const LAB_TARGET_HEIGHT_SHARE = 0.74;
+export const LAB_TARGET_WIDTH_SHARE = 0.78;
+export const LAB_MAX_ZOOM = 3;
+export function labZoomForBounds(samples, width, height) {
+  if (!Array.isArray(samples) || !Number.isFinite(width) || !Number.isFinite(height) ||
+      width <= 0 || height <= 0) return 1;
+  const valid = samples.filter(item => item &&
+    Number.isFinite(item.width) && item.width > 0 &&
+    Number.isFinite(item.height) && item.height > 0);
+  if (!valid.length) return 1;
+  const widest = Math.max(...valid.map(item => item.width));
+  const tallest = Math.max(...valid.map(item => item.height));
+  const zoom = Math.min(LAB_TARGET_WIDTH_SHARE * width / widest,
+    LAB_TARGET_HEIGHT_SHARE * height / tallest, LAB_MAX_ZOOM);
+  return Number.isFinite(zoom) ? Math.max(1, zoom) : 1;
+}
