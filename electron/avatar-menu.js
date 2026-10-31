@@ -148,6 +148,7 @@ function renderState(state) {
     list.className = 'row' + (plugin.enabled ? ' primary' : '');
     list.dataset.action = 'plugin.listWindows';
     list.dataset.value = plugin.id;
+    list.dataset.captureEnabled = String(plugin.captureEnabled);
     list.textContent = '窓一覧を取得';
     list.disabled = !plugin.enabled || plugins.supported === false;
     controls.append(toggle, list);
@@ -303,7 +304,8 @@ document.addEventListener('click', event => {
     const target = document.getElementById('plugin-capture');
     const plugin = windowRow.dataset.pluginId;
     const available = [...document.querySelectorAll('[data-action="plugin.listWindows"]')]
-      .some(item => item.dataset.value === plugin && !item.disabled);
+      .some(item => item.dataset.value === plugin &&
+        item.dataset.captureEnabled === 'true' && !item.disabled);
     target.disabled = !available;
     if (available) target.dataset.value = JSON.stringify({
       pluginId: plugin, windowId: selectedWindowId
