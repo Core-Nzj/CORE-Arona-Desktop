@@ -3,7 +3,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
-  INITIAL_SCALE, maxScaleForArea, clampScale,
+  INITIAL_SCALE, STARTUP_ZOOM_CLICKS, ZOOM_IN_FACTOR,
+  maxScaleForArea, clampScale, resolveZoomScale, startupScaleForArea,
   windowSizeForScale, boundsForScale
 } = require('../electron/avatar-window-size.cjs');
 
@@ -78,4 +79,37 @@ test('native resizing stops at monitor size while optical zoom continues', () =>
   const second = boundsForScale(first.bounds, area, limit * 2);
   assert.deepEqual(first.bounds, second.bounds);
   assert.ok(second.cameraZoom > first.cameraZoom);
+});
+
+test('new startup equals five consecutive old zoom-in button presses', () => {
+  const workAreas = [
+    { x: 0, y: 0, width: 3440, height: 1440 },
+    { x: 0, y: 0, width: 1920, height: 1080 },
+    { x: -2560, y: 0, width: 2560, height: 1440 }
+  ];
+  assert.equal(STARTUP_ZOOM_CLICKS, 5);
+  for (const area of workAreas) {
+    const previousStart = clampScale(INITIAL_SCALE, area);
+    let manualScale = previousStart;
+    for (let i = 0; i < STARTUP_ZOOM_CLICKS; i++) {
+      manualScale = resolveZoomScale(manualScale * ZOOM_IN_FACTOR, area).scale;
+    }
+    const startupScale = startupScaleForArea(area);
+    assert.ok(Math.abs(startupScale - manualScale) < 1e-9);
+    const { nativeScale, cameraZoom } = resolveZoomScale(startupScale, area);
+    assert.ok(Math.abs(nativeScale * cameraZoom - startupScale) < 1e-9);
+    const dimensions = windowSizeForScale(nativeScale);
+    assert.ok(dimensions.width <= area.width);
+    assert.ok(dimensions.height <= area.height);
+    assert.ok(cameraZoom >= 1);
+  }
+});
+
+test('reset can restore the enlarged startup while zooming out remains possible', () => {
+  const area = { x: 0, y: 0, width: 3440, height: 1440 };
+  const startup = startupScaleForArea(area);
+  assert.ok(startup > clampScale(INITIAL_SCALE, area));
+  const reset = resolveZoomScale(startup, area);
+  assert.ok(Math.abs(reset.scale - startup) < 1e-9);
+  assert.ok(resolveZoomScale(startup / ZOOM_IN_FACTOR, area).scale < startup);
 });
