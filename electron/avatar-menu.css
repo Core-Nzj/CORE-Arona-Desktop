@@ -80,7 +80,7 @@ h1 { margin: 5px 0 3px; color: #f5f5f7; font-size: 23px; font-weight: 650; line-
 .heading p { margin: 0; color: #a1a1a6; font-size: 11px; }
 .tabs {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0,1fr));
+  grid-template-columns: repeat(6, minmax(0,1fr));
   gap: 2px;
   margin: 0 15px 9px;
   padding: 3px;
@@ -102,6 +102,19 @@ h1 { margin: 5px 0 3px; color: #f5f5f7; font-size: 23px; font-weight: 650; line-
 }
 .tab.selected { background: #3b3b3e; color: #f5f5f7; box-shadow: 0 1px 3px rgba(0,0,0,.3); }
 .tab:not(.selected):hover { background: #252527; color: #e5e5e7; }
+.plugin-list, .window-list { display: grid; gap: 7px; }
+.plugin-card { padding: 11px; border: 1px solid var(--border); border-radius: 11px; background: #29292c; }
+.plugin-card-heading { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.plugin-card-heading strong { font-size: 11px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.plugin-card-heading span { flex: none; color: #86868b; font-size: 10px; }
+.plugin-card-heading span.plugin-status-on { color: #9acfff; }
+.plugin-card .hint { margin: 8px 0; }
+.plugin-card .row { min-height: 32px; padding: 7px 6px; justify-content: center; font-size: 10px; }
+.window-list { max-height: 210px; overflow-y: auto; scrollbar-color: #55555a transparent; scrollbar-width: thin; }
+.plugin-window-item { display: flex; gap: 9px; justify-content: space-between; align-items: flex-start;
+  background: #29292c; border: 1px solid var(--border); border-radius: 9px; padding: 8px 10px; }
+.plugin-window-item span { min-width: 0; overflow-wrap: anywhere; font-size: 11px; }
+.plugin-window-item small { color: #86868b; flex: none; font-size: 9px; }
 .motion-folder {
   overflow: hidden;
   white-space: nowrap;
