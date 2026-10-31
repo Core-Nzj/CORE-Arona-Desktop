@@ -25,6 +25,7 @@ const {
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 
 const SCHEME = 'arona-avatar';
+const MAX_VMD_BYTES = 32 * 1024 * 1024; // Locally selected, one-shot animation files.
 const ALLOWED_EXTENSIONS = new Set([
   '.pmx', '.pmd', '.png', '.jpg', '.jpeg', '.bmp', '.tga', '.dds',
   '.webp', '.gif', '.spa', '.sph'
@@ -392,6 +393,30 @@ async function chooseModel() {
   return infoForCurrentModel();
 }
 
+async function chooseMotionFile() {
+  const selected = await dialog.showOpenDialog(mainWindow, {
+    title: '再生するVMDモーションを選択',
+    buttonLabel: '1回再生',
+    properties: ['openFile'],
+    filters: [{ name: 'MMDモーション', extensions: ['vmd'] }]
+  });
+  if (selected.canceled || !selected.filePaths.length) return null;
+  const filename = selected.filePaths[0];
+  if (path.extname(filename).toLowerCase() !== '.vmd') {
+    throw new Error('VMDファイルを選択してください');
+  }
+  const stat = await fs.stat(filename);
+  if (!stat.isFile() || stat.size < 54 || stat.size > MAX_VMD_BYTES) {
+    throw new Error('VMDが空か大きすぎます（最大32MiB）');
+  }
+  const data = await fs.readFile(filename);
+  if (!data.subarray(0, 30).toString('ascii').startsWith('Vocaloid Motion Data')) {
+    throw new Error('VMD形式を確認できません');
+  }
+  // Do not transmit the local path or copy third-party assets into the repo.
+  return { name: path.basename(filename), bytes: new Uint8Array(data) };
+}
+
 function isOurWindow(event) {
   return mainWindow && !mainWindow.isDestroyed() && event.sender === mainWindow.webContents;
 }
@@ -563,6 +588,7 @@ function moveMenuResize() {
 function menuState() {
   return {
     modelName: currentModelFile ? path.basename(currentModelFile) : '未選択',
+    motionStatus: idleDiagnostics.split('\n')[0],
     voices: voiceEntries.map(v => ({
       name: v.voice_name,
       selected: v.voice_name === selectedVoiceName
@@ -662,6 +688,15 @@ async function executeMenuAction(action, value) {
       }
       return model ? 'モデルを変更しました' : '変更をキャンセルしました';
     }
+    case 'motion.play': {
+      const motion = await chooseMotionFile();
+      if (!motion) return '選択をキャンセルしました';
+      mainWindow.webContents.send('avatar:motion-command', { type: 'play', ...motion });
+      return 'VMDを送信しました: ' + motion.name;
+    }
+    case 'motion.stop':
+      mainWindow.webContents.send('avatar:motion-command', { type: 'stop' });
+      return '標準待機モーションへ戻します';
     case 'voice.settings':
       openVoiceSettings();
       return '接続設定を開きました';
