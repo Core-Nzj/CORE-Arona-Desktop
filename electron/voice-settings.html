@@ -38,8 +38,9 @@ button {
 }
 button:hover:not(:disabled) { background: #46464b; border-color: rgba(255,255,255,.25); }
 button:focus-visible { outline: 2px solid #2997ff; outline-offset: 2px; }
-button.primary { background: #0071e3; color: #fff; border-color: #0071e3; border-radius: 999px; }
-button.primary:hover:not(:disabled) { background: #1684f6; border-color: #1684f6; }
+/* Important actions are gently blue-tinted, never solid electric blue. */
+button.primary { background: rgba(41,151,255,.16); color: #dceeff; border-color: rgba(91,167,239,.46); border-radius: 999px; }
+button.primary:hover:not(:disabled) { background: rgba(41,151,255,.25); border-color: rgba(113,189,255,.7); }
 button.danger { color: #ff7777; border-color: rgba(255,89,90,.25); background: rgba(255,89,90,.08); }
 button.danger:hover:not(:disabled) { background: rgba(255,89,90,.17); }
 button:disabled { opacity: .45; cursor: not-allowed; }
@@ -50,6 +51,11 @@ button:disabled { opacity: .45; cursor: not-allowed; }
   color: #d2d2d7; white-space: pre-wrap; line-height: 1.5;
   font-size: 11px; overflow-wrap: anywhere;
 }
+/* Connection status is shown by a small dot, not a colored container. */
+#status::before { content: ""; display: inline-block; vertical-align: middle; width: 7px; height: 7px; border-radius: 50%; margin-right: 8px; background: #86868b; }
+#status[data-state="online"]::before { background: #30c76a; }
+#status[data-state="pending"]::before { background: #2997ff; }
+#status[data-state="error"]::before { content: "!"; display: inline-grid; place-items: center; width: 12px; height: 12px; background: #ff7777; color: #171719; font: 800 9px/1 "Segoe UI", sans-serif; }
 .note { margin: 12px 0 0; color: #86868b; font-size: 11px; line-height: 1.58; }
 code { color: #d2d2d7; }
 @media (prefers-reduced-motion: reduce) { button { transition: none; } }
