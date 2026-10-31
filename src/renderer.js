@@ -534,29 +534,31 @@ async function switchMotionWithPolicy(
   await switchMotionWithWarp(requestId, model, () => change(0), animate);
 }
 
-function returnToIdle(requestId, message) {
+function returnToIdle(requestId, message, automaticReturn = false) {
   return queueMotionTransition(async () => {
     if (requestId !== motionRequestId || !activeMmdModel || !idleAnimationHandle) return;
     const model = activeMmdModel;
     const previous = activeImportedMotion;
-    const target = customIdleMotion || { handle: idleAnimationHandle, endFrame: IDLE_FRAMES };
+    const target = customIdleMotion ||
+      { handle: idleAnimationHandle, animation: idleSourceAnimation, endFrame: IDLE_FRAMES };
     if (currentMotionHandle === target.handle && !previous) {
       reportIdle(message);
       return;
     }
     isChangingMotion = true;
     try {
-      await switchMotionWithWarp(requestId, model, async () => {
+      await switchMotionWithPolicy(requestId, model, target.animation, async (startFrame) => {
         model.setRuntimeAnimation(target.handle);
         currentMotionHandle = target.handle;
+        currentMotionAnimation = target.animation;
         mmdRuntime.setManualAnimationDuration(target.endFrame);
-        await mmdRuntime.seekAnimation(0, true);
+        await mmdRuntime.seekAnimation(startFrame, true);
         if (model !== activeMmdModel) return;
         await mmdRuntime.playAnimation();
         activeImportedMotion = null;
         if (previous) model.destroyRuntimeAnimation(previous.handle);
         reportIdle(message);
-      });
+      }, { automaticReturn });
     } finally {
       isChangingMotion = false;
     }
@@ -602,32 +604,35 @@ async function playImportedMotion({ name, bytes }, asIdle = false, animate = tru
       let handle = null;
       isChangingMotion = true;
       try {
-        await switchMotionWithWarp(requestId, model, async () => {
         handle = model.createRuntimeAnimation(animation);
-        model.setRuntimeAnimation(handle);
-        currentMotionHandle = handle;
-        if (asIdle) {
-          customIdleMotion = { handle, name, endFrame };
-          activeImportedMotion = null;
-        } else {
-          activeImportedMotion = { handle, name, endFrame };
-        }
-        mmdRuntime.setManualAnimationDuration(endFrame);
-        await mmdRuntime.seekAnimation(0, true);
-        if (model !== activeMmdModel) return;
-        await mmdRuntime.playAnimation();
-        if (previous) model.destroyRuntimeAnimation(previous.handle);
-        if (asIdle && formerIdle) model.destroyRuntimeAnimation(formerIdle.handle);
-        reportIdle((asIdle ? 'カスタム待機モーション: ' : '外部VMD再生中: ') + name +
-          '\n対応ボーン: ' + boneMatches + ' / 対応モーフ: ' + morphMatches +
-          '\n終端フレーム: ' + endFrame);
-        }, animate);
+        await switchMotionWithPolicy(requestId, model, animation, async (startFrame) => {
+          model.setRuntimeAnimation(handle);
+          currentMotionHandle = handle;
+          currentMotionAnimation = animation;
+          if (asIdle) {
+            customIdleMotion = { handle, animation, name, endFrame };
+            activeImportedMotion = null;
+          } else {
+            activeImportedMotion = { handle, animation, name, endFrame };
+          }
+          mmdRuntime.setManualAnimationDuration(endFrame);
+          await mmdRuntime.seekAnimation(startFrame, true);
+          if (model !== activeMmdModel) return;
+          await mmdRuntime.playAnimation();
+          if (previous) model.destroyRuntimeAnimation(previous.handle);
+          if (asIdle && formerIdle) model.destroyRuntimeAnimation(formerIdle.handle);
+          reportIdle((asIdle ? 'カスタム待機モーション: ' : '外部VMD再生中: ') + name +
+            '\n対応ボーン: ' + boneMatches + ' / 対応モーフ: ' + morphMatches +
+            '\n終端フレーム: ' + endFrame);
+        }, { animate });
       } catch (error) {
         if (model === activeMmdModel && idleAnimationHandle) {
           try {
-            const target = formerIdle || { handle: idleAnimationHandle, endFrame: IDLE_FRAMES };
+            const target = formerIdle ||
+              { handle: idleAnimationHandle, animation: idleSourceAnimation, endFrame: IDLE_FRAMES };
             model.setRuntimeAnimation(target.handle);
             currentMotionHandle = target.handle;
+            currentMotionAnimation = target.animation;
             mmdRuntime.setManualAnimationDuration(target.endFrame);
             await mmdRuntime.seekAnimation(0, true);
             await mmdRuntime.playAnimation();
@@ -941,7 +946,7 @@ engine.runRenderLoop(() => {
         const finished = activeImportedMotion.name;
         const requestId = ++motionRequestId;
         void returnToIdle(requestId, '外部VMD再生完了: ' + finished +
-          '\n待機モーションに戻りました')
+          '\n待機モーションに戻りました', true)
           .catch(error => reportIdle('待機への復帰に失敗: ' + String(error?.message ?? error)))
           .finally(() => { isSeekingIdleLoop = false; });
       } else {
