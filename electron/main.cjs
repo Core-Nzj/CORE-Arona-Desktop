@@ -835,12 +835,10 @@ function createAvatarMenuWindow() {
   popup.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   popup.webContents.on('will-navigate', event => event.preventDefault());
   popup.webContents.on('did-finish-load', () => {
-    if (menuWindow === popup && !popup.isDestroyed()) {
-      popup.webContents.setZoomFactor(menuLayout.zoom);
-    }
-  });
-  popup.once('ready-to-show', () => {
     if (menuWindow !== popup || popup.isDestroyed()) return;
+    popup.webContents.setZoomFactor(menuLayout.zoom);
+    // A fully transparent prewarmed page may never emit ready-to-show on
+    // some GPU drivers. Script-load completion is enough for an instant open.
     menuPrepared = true;
     if (menuPendingOpen) showAvatarMenu();
   });
