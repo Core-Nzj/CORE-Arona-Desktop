@@ -84,6 +84,13 @@
         <button type="button" class="row" data-action="motion.resetIdle">標準待機に戻す</button>
       </div>
       <p class="hint" id="motion-idle">待機: 標準</p>
+      <div class="section-title gap"><span>WALK</span><small>生成歩行 / 実験版</small></div>
+      <div class="motion-toolbar">
+        <button type="button" class="row" data-action="motion.walkLeft" id="walk-left">← 左へ歩く</button>
+        <button type="button" class="row" data-action="motion.walkRight" id="walk-right">右へ歩く →</button>
+      </div>
+      <button type="button" class="row" data-action="motion.walkStop" id="walk-stop">歩行を停止</button>
+      <p class="hint">左右の足IKに対応したモデルで使用できます。画面端で自動停止します。</p>
     </section>
     <section class="page" data-page="voice" hidden>
       <div class="section-title"><span>VOICE</span><small>VoiSona Talk</small></div>
