@@ -7,6 +7,7 @@
   "scripts": {
     "build": "vite build",
     "start": "npm run build && electron .",
+    "motion:lab:request": "node scripts/motion-lab-request.cjs",
     "test": "node --test"
   },
   "dependencies": {
