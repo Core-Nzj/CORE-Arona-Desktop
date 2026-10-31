@@ -2,6 +2,7 @@
 
 const fs = require('node:fs/promises');
 const path = require('node:path');
+const { createHash } = require('node:crypto');
 const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
 
@@ -63,7 +64,7 @@ class FramePluginHost {
     this.preferencesPath = path.join(dataDirectory, 'frame-plugin-permissions.json');
     this.runListScript = runListScript;
     this.platform = platform;
-    this.approved = new Set();
+    this.approved = new Map();
     this.plugins = new Map();
     this.windows = [];
     this.message = '未検索';
@@ -72,12 +73,12 @@ class FramePluginHost {
   async initialize() {
     try {
       const prefs = JSON.parse(await fs.readFile(this.preferencesPath, 'utf8'));
-      if (Array.isArray(prefs?.approved)) {
-        this.approved = new Set(prefs.approved.filter(id =>
-          typeof id === 'string' && /^[a-z][a-z0-9.-]{2,63}$/.test(id)));
+      if (prefs?.approved && typeof prefs.approved === 'object' && !Array.isArray(prefs.approved)) {
+        this.approved = new Map(Object.entries(prefs.approved).filter(([id, hash]) =>
+          /^[a-z][a-z0-9.-]{2,63}$/.test(id) && /^[a-f0-9]{64}$/.test(hash)));
       }
     } catch {
-      this.approved = new Set();
+      this.approved = new Map();
     }
     await this.refresh();
   }
@@ -104,10 +105,15 @@ class FramePluginHost {
         const [manifestStat, scriptStat] = await Promise.all([
           fs.lstat(manifestPath), fs.lstat(scriptPath)
         ]);
-        if (!manifestStat.isFile() || manifestStat.size > 8192 || !scriptStat.isFile()) continue;
+        if (!manifestStat.isFile() || manifestStat.size > 8192 || !scriptStat.isFile() ||
+            scriptStat.size > 128 * 1024) continue;
         // lstat().isFile() rejects symbolic links for both files.
         const manifest = normalizeManifest(JSON.parse(await fs.readFile(manifestPath, 'utf8')), entry.name);
-        if (manifest) next.set(manifest.id, { ...manifest, scriptPath });
+        if (manifest) {
+          const fingerprint = createHash('sha256')
+            .update(await fs.readFile(scriptPath)).digest('hex');
+          next.set(manifest.id, { ...manifest, scriptPath, fingerprint });
+        }
       } catch {
         // Invalid plugins are never loaded or executed.
       }
@@ -122,7 +128,8 @@ class FramePluginHost {
       supported: this.platform === 'win32',
       message: this.message,
       entries: [...this.plugins.values()].map(({ id, name, permissions }) => ({
-        id, name, permissions, enabled: this.approved.has(id)
+        id, name, permissions,
+        enabled: this.approved.get(id) === this.plugins.get(id).fingerprint
       })),
       windows: this.windows
     };
@@ -132,13 +139,13 @@ class FramePluginHost {
     if (typeof id !== 'string' || typeof enabled !== 'boolean' || !this.plugins.has(id)) {
       throw new Error('不明なプラグインです');
     }
-    if (enabled) this.approved.add(id);
+    if (enabled) this.approved.set(id, this.plugins.get(id).fingerprint);
     else this.approved.delete(id);
     this.windows = [];
     await fs.mkdir(path.dirname(this.preferencesPath), { recursive: true });
     // Store only permission choices. No windows, titles, or screenshots persist.
     await fs.writeFile(this.preferencesPath, JSON.stringify({
-      approved: [...this.approved]
+      approved: Object.fromEntries(this.approved)
     }, null, 2), { encoding: 'utf8', mode: 0o600 });
   }
 
@@ -146,10 +153,19 @@ class FramePluginHost {
     if (this.platform !== 'win32') throw new Error('Windows専用の機能です');
     const plugin = typeof id === 'string' ? this.plugins.get(id) : null;
     if (!plugin || plugin.type !== PLUGIN_TYPE) throw new Error('対応するプラグインがありません');
-    if (!this.approved.has(id)) throw new Error('プラグインの利用を許可してください');
+    if (this.approved.get(id) !== plugin.fingerprint) {
+      throw new Error('プラグインの利用を許可してください（更新後は再許可が必要です）');
+    }
     // Revalidate the entry before executing; a missing/replaced symlink is denied.
     const entry = await fs.lstat(plugin.scriptPath);
-    if (!entry.isFile()) throw new Error('プラグインの実行ファイルが不正です');
+    if (!entry.isFile() || entry.size > 128 * 1024) {
+      throw new Error('プラグインの実行ファイルが不正です');
+    }
+    const currentFingerprint = createHash('sha256')
+      .update(await fs.readFile(plugin.scriptPath)).digest('hex');
+    if (currentFingerprint !== plugin.fingerprint) {
+      throw new Error('プラグインが変更されています。再読み込みして権限を再確認してください');
+    }
     try {
       const result = await this.runListScript(plugin.scriptPath);
       this.windows = normalizeWindows(result);
