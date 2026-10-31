@@ -2,6 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const http = require('node:http');
 const { VisionSessionBroker } = require('../electron/vision-session-broker.cjs');
 const { VisionBrowserAdapter, DESTINATION_ID } = require('../electron/vision-browser-adapter.cjs');
 
@@ -49,6 +50,24 @@ test('only a valid one-time code fetches PNG and second claim fails', async t =>
   await assert.rejects(broker.deliver(session.requestId), /有効な画像セッション/);
 });
 
+// Node's fetch may normalize/replace Host rather than transmitting the
+// caller-supplied header. Use node:http to put an invalid Host on the wire.
+function requestWithHost(uri, token, host) {
+  return new Promise((resolve, reject) => {
+    const req = http.request(uri, {
+      method: 'POST',
+      setHost: false,
+      headers: { Host: host, Authorization: 'Bearer ' + token }
+    }, res => {
+      res.resume();
+      res.once('end', () => resolve(res.statusCode));
+      res.once('error', reject);
+    });
+    req.once('error', reject);
+    req.end();
+  });
+}
+
 test('regular web origins, incorrect host and cancellation are refused', async t => {
   const { broker, delivery, pending, uri } = await setup(t);
   const origin = await fetch(uri, {
@@ -57,10 +76,8 @@ test('regular web origins, incorrect host and cancellation are refused', async t
     }
   });
   assert.equal(origin.status, 403);
-  const host = await fetch(uri, {
-    method: 'POST', headers: { Authorization: 'Bearer ' + pending.token, Host: 'evil.test' }
-  });
-  assert.equal(host.status, 403);
+  const rejectedHostStatus = await requestWithHost(uri, pending.token, 'evil.test');
+  assert.equal(rejectedHostStatus, 403);
   assert.equal(broker.revoke(), true);
   await assert.rejects(delivery, /取り消されました/);
   const after = await fetch(uri, {
