@@ -23,6 +23,7 @@ contextBridge.exposeInMainWorld('aronaDesktop', Object.freeze({
   onEmotionChange: (callback) => ipcRenderer.on('avatar:emotion-change', (_event, id) => callback(id)),
   onMotionCommand: (callback) => ipcRenderer.on('avatar:motion-command', (_event, command) => callback(command)),
   onMotionWarpEnabled: (callback) => ipcRenderer.on('avatar:motion-warp-enabled', (_event, enabled) => callback(enabled)),
+  onMotionTransitionMode: (callback) => ipcRenderer.on('avatar:motion-transition-mode', (_event, mode) => callback(mode)),
   startDrag: () => ipcRenderer.send('avatar:drag-start'),
   stopDrag: () => ipcRenderer.send('avatar:drag-stop'),
   setAvatarRegion: (rect) => ipcRenderer.send('avatar:set-region', rect),
