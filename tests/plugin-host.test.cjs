@@ -70,6 +70,25 @@ test('opt-in permission persists, but window titles never persist', async t => {
   assert.deepEqual(restarted.state().windows, []);
 });
 
+test('a changed local script cannot reuse a prior approval', async t => {
+  const { dataDirectory, dir } = await fixture(t);
+  let calls = 0;
+  const host = new FramePluginHost({
+    dataDirectory, platform: 'win32',
+    runListScript: async () => { calls++; return []; }
+  });
+  await host.initialize();
+  await host.setEnabled(ID, true);
+  await fs.writeFile(path.join(dir, 'list-windows.ps1'), '# replaced entry');
+  await assert.rejects(host.listWindows(ID), /変更されています/);
+  assert.equal(calls, 0);
+  await host.refresh();
+  assert.equal(host.state().entries[0].enabled, false);
+  await host.setEnabled(ID, true);
+  assert.deepEqual(await host.listWindows(ID), []);
+  assert.equal(calls, 1);
+});
+
 test('invalid manifests and malformed tool responses are rejected', () => {
   assert.equal(normalizeManifest({ ...manifest, entry: '../hack.ps1' }, ID), null);
   assert.equal(normalizeManifest({ ...manifest, permissions: ['window-titles', 'camera'] }, ID), null);
