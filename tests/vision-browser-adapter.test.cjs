@@ -34,6 +34,7 @@ test('only a valid one-time code fetches PNG and second claim fails', async t =>
     method: 'POST', headers: { Authorization: 'Bearer ' + '0'.repeat(64) }
   });
   assert.equal(denied.status, 401);
+  await denied.arrayBuffer(); // Drain response before closing the server.
   assert.equal(broker.getState().status, 'delivering');
   const response = await fetch(uri, {
     method: 'POST', headers: { Authorization: 'Bearer ' + pending.token }
@@ -47,6 +48,7 @@ test('only a valid one-time code fetches PNG and second claim fails', async t =>
     method: 'POST', headers: { Authorization: 'Bearer ' + pending.token }
   });
   assert.equal(reused.status, 410);
+  await reused.arrayBuffer();
   await assert.rejects(broker.deliver(session.requestId), /有効な画像セッション/);
 });
 
@@ -76,6 +78,7 @@ test('regular web origins, incorrect host and cancellation are refused', async t
     }
   });
   assert.equal(origin.status, 403);
+  await origin.arrayBuffer();
   const rejectedHostStatus = await requestWithHost(uri, pending.token, 'evil.test');
   assert.equal(rejectedHostStatus, 403);
   assert.equal(broker.revoke(), true);
@@ -84,6 +87,7 @@ test('regular web origins, incorrect host and cancellation are refused', async t
     method: 'POST', headers: { Authorization: 'Bearer ' + pending.token }
   });
   assert.equal(after.status, 410);
+  await after.arrayBuffer();
 });
 
 test('expiry removes receipt code and prevents late reads', async t => {
@@ -101,4 +105,45 @@ test('expiry removes receipt code and prevents late reads', async t => {
   assert.equal(broker.getState().status, 'expired');
   assert.equal(adapter.getPending(), null);
   assert.match(await completed, /取り消されました/);
+});
+
+
+test('shutdown closes authenticated HTTP keep-alive sockets promptly', async t => {
+  const { adapter, broker, delivery, pending, uri } = await setup(t);
+  const agent = new http.Agent({ keepAlive: true });
+  t.after(() => agent.destroy());
+
+  const denied = await new Promise((resolve, reject) => {
+    const req = http.request(uri, {
+      method: 'POST',
+      agent,
+      headers: { Authorization: 'Bearer ' + '0'.repeat(64) }
+    }, response => {
+      response.resume();
+      response.once('end', () => resolve(response.statusCode));
+      response.once('error', reject);
+    });
+    req.once('error', reject);
+    req.end();
+  });
+  assert.equal(denied, 401);
+  assert.equal(broker.getState().status, 'delivering');
+  broker.revoke();
+  await assert.rejects(delivery, /取り消されました/);
+
+  // The server must not wait indefinitely for the keep-alive client's socket.
+  // A deadline makes this a useful regression test instead of another hang.
+  let timer;
+  try {
+    await Promise.race([
+      adapter.disconnect(),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error('Chrome bridge shutdown timed out')), 1500);
+      })
+    ]);
+  } finally {
+    clearTimeout(timer);
+    agent.destroy();
+  }
+  assert.equal(adapter.getPending(), null);
 });
