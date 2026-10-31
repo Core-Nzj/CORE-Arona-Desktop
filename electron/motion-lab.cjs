@@ -97,7 +97,7 @@ function galleryHtml(meta, entries) {
     'For numeric IK foot positions, supported bones and rendering details, see ' +
     '<a href="manifest.json">manifest.json</a> and <a href="REVIEW_GUIDE.md">REVIEW_GUIDE.md</a>. ' +
     'Local private assets; do not commit these images.</p>' +
-    gallery + '</main></html>';
+    group + '</main></html>';
 }
 
 async function completeMotionLab(session, meta = {}) {
