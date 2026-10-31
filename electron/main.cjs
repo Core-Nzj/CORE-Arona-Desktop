@@ -4,8 +4,8 @@ const { app, BrowserWindow, clipboard, dialog, ipcMain, protocol, screen, safeSt
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { resolveAssetPath } = require('./asset-path.cjs');
-const { motionLabRoot, beginMotionLab, writeMotionLabImage, completeMotionLab } =
-  require('./motion-lab.cjs');
+const { motionLabRoot, beginMotionLab, writeMotionLabImage, completeMotionLab,
+  pruneMotionLabRuns, MOTION_LAB_KEEP_RUNS } = require('./motion-lab.cjs');
 const { requestDirectory, resultName, validateRequest, REQUEST_NAME } =
   require('./motion-lab-control.cjs');
 const { DEFAULT_FRAME_RATE, FRAME_RATE_OPTIONS, normalizeFrameRate, movementIntervalMs } = require('./frame-rate.cjs');
@@ -1393,6 +1393,18 @@ app.whenReady().then(async () => {
       updateMotionLabStatus('保存完了: ' + directory);
       console.info('[FRAME motion lab] saved:', directory);
       await respondToMotionLabRequest(session, { ok: true, directory });
+      // Prune only AFTER the new gallery and manifest have been saved.
+      // Retention failure must not turn a successful capture into an error.
+      try {
+        const deleted = await pruneMotionLabRuns(motionLabFolder(), {
+          keep: MOTION_LAB_KEEP_RUNS, protectedRun: directory
+        });
+        if (deleted.length) {
+          console.info('[FRAME motion lab] older completed captures removed:', deleted.join(', '));
+        }
+      } catch (cleanupError) {
+        console.warn('[FRAME motion lab] retention cleanup skipped:', cleanupError);
+      }
       // Terminal/AI-triggered captures should not steal desktop focus by
       // opening Explorer. The console prints the resulting gallery path.
       if (!session.externalRequestId) {
