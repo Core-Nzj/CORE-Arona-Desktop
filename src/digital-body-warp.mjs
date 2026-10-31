@@ -1,3 +1,10 @@
+// Decide whether the transition can run while the model, rather than the
+// model-selection placeholder, is visible. Keep this gate independently
+// testable so a reversed hidden check cannot silently disable every effect.
+export function shouldAnimateMotionWarp({ animate, enabled, available, placeholderHidden }) {
+  return Boolean(animate && enabled && available && placeholderHidden);
+}
+
 // FRAME digital-body transfer. The WebGL canvas itself fades in every
 // environment, even when Chromium cannot copy a GPU canvas into 2D Canvas.
 // Fragments and scanning highlights are optional, never a reason to skip fade.
