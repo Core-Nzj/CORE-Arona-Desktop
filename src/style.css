@@ -17,7 +17,13 @@ html, body, #app {
   display: block; outline: none;
   cursor: default; touch-action: none;
 }
+#digital-warp-canvas {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  pointer-events: none; z-index: 1;
+}
+#digital-warp-canvas[hidden] { display: none; }
 #placeholder {
+  z-index: 2;
   position: absolute;
   left: 8%; bottom: 40px; width: 84%;
   padding: 21px 14px;
