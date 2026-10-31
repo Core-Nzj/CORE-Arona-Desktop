@@ -7,6 +7,10 @@ const motionList = document.getElementById('motion-list');
 let busy = false;
 let selectedWindowId = null;
 let selectedWindowPluginId = null;
+let captureBusy = false;
+let lastCaptureRequest = null;
+let lastPluginError = '';
+let currentState = null;
 
 function message(value, error = false) {
   feedback.textContent = value;
@@ -37,6 +41,7 @@ function makeOption(label, id, selected, enabled, action) {
 }
 function renderState(state) {
   if (!state || typeof state !== 'object') return;
+  currentState = state;
   document.getElementById('model-name').textContent = state.modelName || '未選択';
   document.getElementById('motion-status').textContent = state.motionStatus || '標準待機モーション';
   const library = state.motionLibrary || {};
@@ -163,7 +168,10 @@ function renderState(state) {
   }
   document.getElementById('plugin-count').textContent = entriesForPlugins.length + '件';
   document.getElementById('plugin-status').textContent = plugins.message || '';
-  document.getElementById('plugin-list').replaceChildren(...pluginCards);
+  const pluginList = document.getElementById('plugin-list');
+  const oldPluginScroll = pluginList.scrollTop;
+  pluginList.replaceChildren(...pluginCards);
+  pluginList.scrollTop = oldPluginScroll;
   const windows = Array.isArray(plugins.windows) ? plugins.windows : [];
   const currentPluginId = plugins.activePluginId;
   if (!windows.some(item => item.id === selectedWindowId) ||
@@ -192,11 +200,16 @@ function renderState(state) {
     empty.textContent = 'まだ取得していません（または表示中のウィンドウがありません）。';
     windowItems.push(empty);
   }
-  document.getElementById('plugin-windows').replaceChildren(...windowItems);
+  const windowList = document.getElementById('plugin-windows');
+  const oldWindowScroll = windowList.scrollTop;
+  windowList.replaceChildren(...windowItems);
+  windowList.scrollTop = oldWindowScroll;
+
   const activePlugin = entriesForPlugins.find(item =>
     item.id === currentPluginId && item.enabled && item.captureEnabled);
   const captureButton = document.getElementById('plugin-capture');
-  captureButton.disabled = !selectedWindowId || !activePlugin;
+  captureButton.disabled = captureBusy || !selectedWindowId || !activePlugin;
+  captureButton.textContent = captureBusy ? '撮影中…' : '選択した窓を撮影';
   if (!captureButton.disabled) {
     captureButton.dataset.value = JSON.stringify({
       pluginId: currentPluginId, windowId: selectedWindowId
@@ -204,10 +217,34 @@ function renderState(state) {
   } else {
     delete captureButton.dataset.value;
   }
+
+  // A re-capture is only valid while the originally listed window/PID remains.
+  if (lastCaptureRequest && (!activePlugin ||
+      lastCaptureRequest.pluginId !== currentPluginId ||
+      !windows.some(item =>
+        item.id === lastCaptureRequest.windowId && item.pid === lastCaptureRequest.pid))) {
+    lastCaptureRequest = null;
+  }
+  const recaptureButton = document.getElementById('plugin-recapture');
+  recaptureButton.disabled = captureBusy || !lastCaptureRequest;
+  if (lastCaptureRequest) {
+    recaptureButton.dataset.value = JSON.stringify({
+      pluginId: lastCaptureRequest.pluginId,
+      windowId: lastCaptureRequest.windowId
+    });
+  } else {
+    delete recaptureButton.dataset.value;
+  }
+
+  const errorBox = document.getElementById('plugin-error');
+  errorBox.hidden = !lastPluginError;
+  errorBox.textContent = lastPluginError;
+
   const preview = plugins.capture || null;
   const previewElement = document.getElementById('plugin-preview');
   previewElement.hidden = !preview;
-  document.getElementById('plugin-clear').disabled = !preview;
+  document.getElementById('plugin-clear').disabled = captureBusy || !preview;
+  document.getElementById('plugin-preview-open').disabled = !preview;
   const previewImage = document.getElementById('plugin-preview-image');
   if (preview && typeof preview.dataUrl === 'string' &&
       preview.dataUrl.startsWith('data:image/png;base64,')) {
@@ -217,6 +254,11 @@ function renderState(state) {
       preview.width + ' × ' + preview.height;
   } else {
     previewImage.removeAttribute('src');
+    document.getElementById('plugin-preview-title').textContent = '';
+    document.getElementById('plugin-preview-size').textContent = '';
+    if (!document.getElementById('plugin-lightbox').hidden) {
+      closePreviewLightbox(false);
+    }
   }
 }
 // The window is transparent and frameless: manually capture edge drags.
