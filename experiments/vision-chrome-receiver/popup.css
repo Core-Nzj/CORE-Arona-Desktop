@@ -27,3 +27,8 @@ button.secondary { background: #36363a; }
 #attach-status { min-height: 22px; }
 #discard { margin-top: 9px; }
 .note { font-size: 10px; color: #85858b; }
+
+#attach { background: #3a3a40; }
+#send-image { background: #0071e3; font-weight: 650; }
+#send-consent { accent-color: #0071e3; }
+#attach-status { white-space: pre-wrap; }
