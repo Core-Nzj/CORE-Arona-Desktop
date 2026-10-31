@@ -1057,7 +1057,9 @@ app.whenReady().then(async () => {
       return { ok: true, message, state: menuState() };
     } catch (error) {
       console.error('[CORE menu] action failed:', action, error);
-      return { ok: false, message: String(error?.message ?? error).slice(0, 240) };
+      const detail = String(error?.message ?? error);
+      return { ok: false, message: detail.slice(0,
+        typeof action === 'string' && action.startsWith('plugin.') ? 4096 : 240) };
     }
   });
   ipcMain.on('avatar-menu:resize-start', (event, edge) => {
