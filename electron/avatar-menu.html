@@ -40,6 +40,13 @@
         <button type="button" class="row" data-action="zoom.in">＋ 拡大</button>
       </div>
       <p class="hint">モデル上のホイールでも拡大・縮小できます。</p>
+      <div class="section-title gap"><span>PERFORMANCE</span><small>描画・モーション・移動</small></div>
+      <div class="motion-transition-mode" role="group" aria-label="上限FPS">
+        <button type="button" class="transition-choice fps-choice" data-action="render.fps" data-value="30" aria-pressed="false">30 FPS</button>
+        <button type="button" class="transition-choice fps-choice selected" data-action="render.fps" data-value="60" aria-pressed="true">60 FPS</button>
+        <button type="button" class="transition-choice fps-choice" data-action="render.fps" data-value="120" aria-pressed="false">120 FPS</button>
+      </div>
+      <p class="hint">FPS上限。実際の滑らかさはモニターとPC性能によります。クリック・輪郭判定は独立しています。</p>
       <div class="section-title gap"><span>APPEARANCE</span><small>表示設定</small></div>
       <div class="text-size-control">
         <div class="text-size-heading">
