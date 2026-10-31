@@ -1,6 +1,7 @@
 import './style.css';
 import { rectanglesFromAlpha } from './silhouette.mjs';
 import { buildIdleVmd, IDLE_FRAMES } from './idle-vmd.mjs';
+import { WALK_FRAMES, buildWalkingVmd, walkTravelSpeed } from './walk-vmd.mjs';
 import { EmotionController } from './emotions.mjs';
 import { makeWebAudioBuffer } from './pcm-playback.mjs';
 import { LipSyncController, mouthLevelFromSamples } from './lip-sync.mjs';
@@ -92,6 +93,8 @@ let motionWarpEnabled = true;
 let exitWarpStarted = false;
 let customIdleMotion = null;
 let activeImportedMotion = null;
+let walkingMotion = null;
+let cachedWalkAnimations = new Map();
 let motionRequestId = 0;
 let motionTransitionQueue = Promise.resolve();
 let isChangingMotion = false;
@@ -459,7 +462,8 @@ async function switchMotionWithBlend(requestId, model, targetAnimation, change) 
   const source = currentMotionAnimation;
   const oldHandle = currentMotionHandle;
   const oldFrame = mmdRuntime.currentFrameTime;
-  const oldDuration = activeImportedMotion?.endFrame ?? customIdleMotion?.endFrame ?? IDLE_FRAMES;
+  const oldDuration = activeImportedMotion?.endFrame ??
+    walkingMotion?.endFrame ?? customIdleMotion?.endFrame ?? IDLE_FRAMES;
   const spanParams = blendSpanParameters(oldFrame);
   let compositeHandle = null;
   let blendReady = false;
@@ -720,6 +724,9 @@ async function loadModel(model) {
     ++motionRequestId; // Invalidate pending VMD parses and transitions.
     bodyWarp.cancel();
     activeImportedMotion = null;
+    walkingMotion = null;
+    cachedWalkAnimations = new Map();
+    window.aronaDesktop.setWalkVelocity(0, 0);
     idleAnimationHandle = null;
     idleSourceAnimation = null;
     currentMotionHandle = null;
@@ -891,6 +898,7 @@ window.aronaDesktop.onMotionCommand(onMotionCommand);
 window.aronaDesktop.onPrepareQuit(() => {
   if (exitWarpStarted) return;
   exitWarpStarted = true;
+  window.aronaDesktop.setWalkVelocity(0, 0);
   ++motionRequestId;
   bodyWarp.cancel();
   void (async () => {
@@ -941,7 +949,8 @@ engine.runRenderLoop(() => {
   scene.render();
   bodyWarp.render(performance.now());
   if (activeMmdModel && !isChangingMotion && !isSeekingIdleLoop) {
-    const endFrame = activeImportedMotion?.endFrame ?? customIdleMotion?.endFrame ?? IDLE_FRAMES;
+    const endFrame = activeImportedMotion?.endFrame ??
+      walkingMotion?.endFrame ?? customIdleMotion?.endFrame ?? IDLE_FRAMES;
     if (mmdRuntime.currentFrameTime >= endFrame - 1) {
       isSeekingIdleLoop = true;
       if (activeImportedMotion) {
