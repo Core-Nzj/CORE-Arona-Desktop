@@ -89,6 +89,7 @@ let motionSelectedId = null;
 let motionIdleId = null;
 let motionLibraryMessage = '未検索';
 let motionWarpEnabled = true;
+let motionTransitionMode = 'auto';
 const voiceClient = new VoiceProxyClient();
 let voiceEntries = [];
 let voiceError = '接続を確認していません';
@@ -329,7 +330,8 @@ function infoForCurrentModel() {
   return {
     name: path.basename(currentModelFile),
     url: SCHEME + '://model/' + encodeURIComponent(path.basename(currentModelFile)),
-    motionWarpEnabled
+    motionWarpEnabled,
+    motionTransitionMode
   };
 }
 
@@ -350,6 +352,7 @@ async function restoreModelSelection() {
     if (typeof settings.motionIdleId === 'string') motionIdleId = settings.motionIdleId;
     if (typeof settings.motionSelectedId === 'string') motionSelectedId = settings.motionSelectedId;
     if (typeof settings.motionWarpEnabled === 'boolean') motionWarpEnabled = settings.motionWarpEnabled;
+    if (['auto', 'blend', 'warp'].includes(settings.motionTransitionMode)) motionTransitionMode = settings.motionTransitionMode;
     if (typeof settings.modelPath !== 'string') return;
     if (!['.pmx', '.pmd'].includes(path.extname(settings.modelPath).toLowerCase())) return;
     const stats = await fs.stat(settings.modelPath);
@@ -371,7 +374,8 @@ async function saveModelSelection() {
     motionDirectory,
     motionIdleId,
     motionSelectedId,
-    motionWarpEnabled
+    motionWarpEnabled,
+    motionTransitionMode
   }, null, 2), 'utf8');
 }
 
@@ -665,6 +669,7 @@ function menuState() {
     modelName: currentModelFile ? path.basename(currentModelFile) : '未選択',
     motionStatus: idleDiagnostics.split('\n')[0],
     motionWarpEnabled,
+    motionTransitionMode,
     motionLibrary: {
       directory: motionDirectory || '',
       entries: motionEntries,
@@ -832,6 +837,12 @@ async function executeMenuAction(action, value) {
       mainWindow.webContents.send('avatar:motion-command', { type: 'idle', ...motion });
       return '待機モーションに設定しました: ' + motion.name;
     }
+    case 'motion.transition':
+      if (!['auto', 'blend', 'warp'].includes(value)) throw new Error('不正な遷移方式です');
+      motionTransitionMode = value;
+      await saveModelSelection();
+      mainWindow.webContents.send('avatar:motion-transition-mode', value);
+      return '切り替え方式: ' + ({ auto: '自動', blend: 'ブレンド優先', warp: 'デジタル転送' }[value]);
     case 'motion.warpToggle':
       motionWarpEnabled = !motionWarpEnabled;
       await saveModelSelection();
