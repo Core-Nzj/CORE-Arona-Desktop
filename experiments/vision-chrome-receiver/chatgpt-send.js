@@ -69,10 +69,20 @@ async function frameSendPreparedImageToChatGPT(expectedUrl) {
     }
 
     // Match only this transfer's file, not a generic image or old attachment.
-    const selectedFile = [...document.querySelectorAll('input[type="file"]')]
-      .some(input => [...(input.files || [])].some(f => f.name === name &&
-        f.type === 'image/png'));
+    const selectedFiles = [...document.querySelectorAll('input[type="file"]')]
+      .flatMap(input => [...(input.files || [])]);
+    if (selectedFiles.some(f => f.name !== name)) {
+      return { ok: false, reason: 'other-attachment-added' };
+    }
+    const selectedFile = selectedFiles.some(f => f.name === name &&
+      f.type === 'image/png');
     const chips = [...form.querySelectorAll('[role="group"][aria-label]')];
+    if (chips.some(chip => {
+      const label = chip.getAttribute('aria-label') || '';
+      return /\.(?:png|jpe?g|gif|webp|pdf)$/i.test(label) && label !== name;
+    })) {
+      return { ok: false, reason: 'other-attachment-added' };
+    }
     const matchedChip = chips.some(chip => chip.getAttribute('aria-label') === name);
     const preview = form.querySelector('img[alt="FRAME-vision.png"]') ||
       form.querySelector('img[alt="FRAME-vision"]');
