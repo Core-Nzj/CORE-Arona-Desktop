@@ -6,7 +6,7 @@ import { makeWebAudioBuffer } from './pcm-playback.mjs';
 import { LipSyncController, mouthLevelFromSamples } from './lip-sync.mjs';
 import { SpeechPlaybackQueue } from './speech-queue.mjs';
 import { approachZoom, fovForZoom } from './camera-zoom.mjs';
-import { DigitalBodyWarp } from './digital-body-warp.mjs';
+import { DigitalBodyWarp, shouldAnimateMotionWarp } from './digital-body-warp.mjs';
 import { Engine } from '@babylonjs/core/Engines/engine';
 import { Scene } from '@babylonjs/core/scene';
 import { ArcRotateCamera } from '@babylonjs/core/Cameras/arcRotateCamera';
@@ -407,7 +407,12 @@ function queueMotionTransition(callback) {
 // the incoming VMD to frame zero, then reveal it while it is playing.
 // The same-motion idle loop never invokes this transfer.
 async function switchMotionWithWarp(requestId, model, change, animate = true) {
-  const canAnimate = animate && motionWarpEnabled && bodyWarp.enabled && !placeholder.hidden;
+  const canAnimate = shouldAnimateMotionWarp({
+    animate,
+    enabled: motionWarpEnabled,
+    available: bodyWarp.enabled,
+    placeholderHidden: placeholder.hidden
+  });
   if (canAnimate) await bodyWarp.conceal();
   if (requestId !== motionRequestId || model !== activeMmdModel) {
     if (canAnimate) bodyWarp.cancel();
