@@ -24,12 +24,18 @@
       <input type="checkbox" id="attach-consent" disabled>
       <span>この画像を表示中のChatGPT会話へ添付することを許可します。添付時にChatGPTへアップロードされる場合があります。</span>
     </label>
-    <button id="attach" type="button" disabled>ChatGPTの入力欄へ添付</button>
+    <button id="attach" type="button" disabled>添付のみ（送信しない）</button>
+    <label class="confirm" for="send-consent">
+      <input type="checkbox" id="send-consent" disabled>
+      <span>この画像だけを現在のChatGPT会話へ添付し、メッセージとして送信することを許可します。既存の文章や添付がある場合は送信しません。</span>
+    </label>
+    <button id="send-image" type="button" class="send-primary" disabled>画像を添付して送信（1回）</button>
     <p id="attach-status" role="status" aria-live="polite"></p>
     <button id="discard" type="button" class="secondary">拡張内の画像を消去</button>
   </section>
   <p class="note">画像は拡張内で一時保持し、ファイル保存・自動送信はしません。画像添付が反映されたかはChatGPT画面で確認してください。</p>
   <script src="chatgpt-attach.js"></script>
+  <script src="chatgpt-send.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>
