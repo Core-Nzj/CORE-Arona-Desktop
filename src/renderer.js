@@ -7,6 +7,7 @@ import { LipSyncController, mouthLevelFromSamples } from './lip-sync.mjs';
 import { SpeechPlaybackQueue } from './speech-queue.mjs';
 import { approachZoom, fovForZoom } from './camera-zoom.mjs';
 import { DigitalBodyWarp, shouldAnimateMotionWarp, remainingWarpHoldMs } from './digital-body-warp.mjs';
+import { BLEND_FRAMES, chooseMotionTransition, blendSpanParameters } from './motion-blend.mjs';
 import { Engine } from '@babylonjs/core/Engines/engine';
 import { Scene } from '@babylonjs/core/scene';
 import { ArcRotateCamera } from '@babylonjs/core/Cameras/arcRotateCamera';
@@ -22,11 +23,14 @@ import { MmdStandardMaterialBuilder } from 'babylon-mmd/esm/Loader/mmdStandardMa
 import { MmdRuntime } from 'babylon-mmd/esm/Runtime/mmdRuntime';
 import { VmdLoader } from 'babylon-mmd/esm/Loader/vmdLoader';
 import { RegisterMmdRuntimeModelAnimation } from 'babylon-mmd/esm/Runtime/Animation/mmdRuntimeModelAnimation.pure';
+import { MmdCompositeAnimation, MmdAnimationSpan } from 'babylon-mmd/esm/Runtime/Animation/mmdCompositeAnimation';
+import { RegisterMmdCompositeRuntimeModelAnimation } from 'babylon-mmd/esm/Runtime/Animation/mmdCompositeRuntimeModelAnimation.pure';
 
 RegisterPmxLoader();
 RegisterPmdLoader();
 RegisterMmdOutlineRenderer();
 RegisterMmdRuntimeModelAnimation();
+RegisterMmdCompositeRuntimeModelAnimation();
 
 const canvas = document.getElementById('avatar-canvas');
 const bodyWarp = new DigitalBodyWarp(canvas, document.getElementById('digital-warp-canvas'));
@@ -81,6 +85,9 @@ let observedFrameTime = 0;
 let idlePlaybackCheckTimer = null;
 let idleAnimationHandle = null;
 let currentMotionHandle = null;
+let currentMotionAnimation = null;
+let idleSourceAnimation = null;
+let motionTransitionMode = 'auto';
 let motionWarpEnabled = true;
 let exitWarpStarted = false;
 let customIdleMotion = null;
@@ -377,6 +384,8 @@ async function attachIdleMotion(container) {
     if (activeContainer === container) {
       idleAnimationHandle = handle;
       currentMotionHandle = handle;
+      currentMotionAnimation = animation;
+      idleSourceAnimation = animation;
     }
     mmdRuntime.setManualAnimationDuration(IDLE_FRAMES);
     await mmdRuntime.seekAnimation(0, true);
@@ -588,6 +597,8 @@ async function loadModel(model) {
   const seq = ++loadSequence;
   chooseButton.disabled = true;
   motionWarpEnabled = model.motionWarpEnabled !== false;
+  motionTransitionMode = ['auto', 'blend', 'warp'].includes(model.motionTransitionMode)
+    ? model.motionTransitionMode : 'auto';
   showStatus('読み込み中: ' + model.name);
   reportIdle('モデルを読み込み中: ' + model.name);
   let nextContainer;
@@ -621,7 +632,9 @@ async function loadModel(model) {
     bodyWarp.cancel();
     activeImportedMotion = null;
     idleAnimationHandle = null;
+    idleSourceAnimation = null;
     currentMotionHandle = null;
+    currentMotionAnimation = null;
     customIdleMotion = null;
     if (emotionController) {
       emotionController.dispose();
@@ -807,6 +820,9 @@ window.aronaDesktop.onPrepareQuit(() => {
 window.aronaDesktop.onMotionWarpEnabled(enabled => {
   motionWarpEnabled = enabled !== false;
   if (!motionWarpEnabled) bodyWarp.cancel();
+});
+window.aronaDesktop.onMotionTransitionMode(mode => {
+  if (['auto', 'blend', 'warp'].includes(mode)) motionTransitionMode = mode;
 });
 window.aronaDesktop.onVoiceTest(() => speakLatest('先生、こんにちは！ コア・アロナ・デスクトップから、お話ししています。'));
 window.aronaDesktop.onVoiceText(text => { void speakLatest(text); });
