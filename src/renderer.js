@@ -787,11 +787,14 @@ function onMotionCommand(command) {
   }
 }
 
-async function loadModel(model) {
+const STARTUP_APPEAR_MS = 2000;
+
+async function loadModel(model, { startup = false } = {}) {
   if (!model) return;
   const seq = ++loadSequence;
   chooseButton.disabled = true;
   motionWarpEnabled = model.motionWarpEnabled !== false;
+  const revealOnStartup = startup && motionWarpEnabled && bodyWarp.enabled && !exitWarpStarted;
   motionTransitionMode = ['auto', 'blend', 'warp'].includes(model.motionTransitionMode)
     ? model.motionTransitionMode : 'auto';
   showStatus('読み込み中: ' + model.name);
@@ -824,7 +827,8 @@ async function loadModel(model) {
     const oldContainer = activeContainer;
     const oldMmdModel = activeMmdModel;
     ++motionRequestId; // Invalidate pending VMD parses and transitions.
-    bodyWarp.cancel();
+    if (revealOnStartup) bodyWarp.holdHidden();
+    else bodyWarp.cancel();
     activeImportedMotion = null;
     walkingMotion = null;
     cachedWalkAnimations = new Map();
@@ -894,6 +898,11 @@ async function loadModel(model) {
     }
     placeholder.hidden = true;
     regionDirty = true;
+    // First model appearance uses the existing cyan transfer, extended to
+    // two seconds. Manual model selection and motion switching stay fast.
+    if (revealOnStartup && bodyWarp.phase === 'hidden') {
+      void bodyWarp.reveal(STARTUP_APPEAR_MS);
+    }
     // Restore the saved local idle clip after the runtime and its generated
     // fallback have been initialized. Missing files leave the fallback active.
     const restoreAfterRequest = motionRequestId;
@@ -905,6 +914,8 @@ async function loadModel(model) {
     }).catch(error => console.warn('[CORE motion] idle restore failed:', error));
   } catch (error) {
     if (seq === loadSequence) {
+      // Never strand the canvas at 0% opacity if startup loading fails.
+      if (revealOnStartup) bodyWarp.cancel();
       console.error('Failed to load MMD model:', error);
       const message = error instanceof Error ? error.message : String(error);
       showStatus('読み込めませんでした: ' + message);
@@ -1086,7 +1097,7 @@ engine.runRenderLoop(() => {
 window.addEventListener('resize', () => { engine.resize(); regionDirty = true; });
 
 window.aronaDesktop.currentModel()
-  .then(model => { if (model) return loadModel(model); })
+  .then(model => { if (model) return loadModel(model, { startup: true }); })
   .catch(error => {
     console.error(error);
     showStatus('前回のモデルを復元できませんでした');

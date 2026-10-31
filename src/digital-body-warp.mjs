@@ -33,6 +33,7 @@ export class DigitalBodyWarp {
     this.context = overlay?.getContext('2d', { alpha: true }) ?? null;
     this.disappearMs = disappearMs;
     this.appearMs = appearMs;
+    this.revealDurationMs = appearMs;
     this.phase = 'idle';
     this.since = 0;
     this.pending = null;
@@ -60,6 +61,15 @@ export class DigitalBodyWarp {
     this.settle();
   }
 
+  // Startup-only preparation: make the loaded model invisible without
+  // playing a disappearance animation first.
+  holdHidden() {
+    if (!this.enabled) return;
+    this.cancel();
+    this.phase = 'hidden';
+    this.source.style.opacity = '0';
+  }
+
   conceal() {
     if (!this.enabled) return Promise.resolve();
     this.cancel();
@@ -72,8 +82,10 @@ export class DigitalBodyWarp {
     return new Promise(resolve => { this.pending = resolve; });
   }
 
-  reveal() {
+  reveal(durationMs = this.appearMs) {
     if (!this.enabled || this.phase !== 'hidden') return Promise.resolve();
+    this.revealDurationMs = Number.isFinite(durationMs) && durationMs > 0
+      ? durationMs : this.appearMs;
     this.phase = 'in';
     this.since = performance.now();
     this.source.style.opacity = '0';
@@ -86,7 +98,7 @@ export class DigitalBodyWarp {
     if (this.phase === 'idle') return;
 
     const outgoing = this.phase === 'out';
-    const duration = outgoing ? this.disappearMs : this.appearMs;
+    const duration = outgoing ? this.disappearMs : this.revealDurationMs;
     const progress = clamp((now - this.since) / duration);
     if (this.phase === 'hidden') {
       this.source.style.opacity = '0';

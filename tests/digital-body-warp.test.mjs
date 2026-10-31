@@ -129,3 +129,40 @@ test('body stays entirely hidden for at least 1000ms after disappearing', () => 
   assert.equal(remainingWarpHoldMs(500, 1500), 0);
   assert.equal(remainingWarpHoldMs(500, 1900), 0);
 });
+
+test('startup appearance holds the model hidden and reveals it over two seconds', async () => {
+  const { warp, source, overlay } = makeWarp();
+  warp.holdHidden();
+  assert.equal(warp.phase, 'hidden');
+  assert.equal(source.style.opacity, '0');
+  assert.equal(overlay.hidden, true);
+
+  const appearing = warp.reveal(2000);
+  assert.equal(warp.phase, 'in');
+  assert.equal(overlay.hidden, false);
+  warp.render(warp.since + 1000);
+  assert.ok(Number(source.style.opacity) > 0);
+  assert.ok(Number(source.style.opacity) < 1);
+  warp.render(warp.since + 1999);
+  assert.equal(warp.phase, 'in');
+  warp.render(warp.since + 2000);
+  await appearing;
+  assert.equal(warp.phase, 'idle');
+  assert.equal(source.style.opacity, '');
+  assert.equal(overlay.hidden, true);
+});
+
+test('subsequent transfer reveals still use the original 300ms duration', async () => {
+  const { warp } = makeWarp();
+  warp.holdHidden();
+  const first = warp.reveal(2000);
+  warp.render(warp.since + 2000);
+  await first;
+  warp.holdHidden();
+  const next = warp.reveal();
+  warp.render(warp.since + 299);
+  assert.equal(warp.phase, 'in');
+  warp.render(warp.since + 300);
+  await next;
+  assert.equal(warp.phase, 'idle');
+});
