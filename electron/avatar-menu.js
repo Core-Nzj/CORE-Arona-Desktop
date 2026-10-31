@@ -303,6 +303,25 @@ for (const zone of document.querySelectorAll('[data-resize-edge]')) {
 }
 window.addEventListener('blur', endResize);
 
+function openPreviewLightbox() {
+  const preview = currentState?.plugins?.capture;
+  if (!preview?.dataUrl?.startsWith('data:image/png;base64,')) return;
+  const layer = document.getElementById('plugin-lightbox');
+  document.getElementById('plugin-lightbox-title').textContent = preview.title || 'LOCAL PREVIEW';
+  document.getElementById('plugin-lightbox-image').src = preview.dataUrl;
+  layer.hidden = false;
+  document.getElementById('plugin-lightbox-close').focus();
+}
+
+function closePreviewLightbox(restoreFocus = true) {
+  const layer = document.getElementById('plugin-lightbox');
+  layer.hidden = true;
+  document.getElementById('plugin-lightbox-image').removeAttribute('src');
+  if (restoreFocus && !document.getElementById('plugin-preview-open').disabled) {
+    document.getElementById('plugin-preview-open').focus();
+  }
+}
+
 const keepOpen = new Set([
   'voice.refresh', 'voice.select', 'emotion.select',
   'voice.autoStart', 'voice.autoHide', 'voice.appHide',
@@ -311,23 +330,77 @@ const keepOpen = new Set([
   'plugin.folder', 'plugin.refresh', 'plugin.toggle', 'plugin.listWindows',
   'plugin.captureWindow', 'plugin.clearCapture'
 ]);
+
 async function runAction(action, value) {
   if (busy) return;
+  if (action === 'plugin.previewOpen') { openPreviewLightbox(); return; }
+  if (action === 'plugin.previewClose') { closePreviewLightbox(); return; }
+
+  if (action === 'plugin.recapture') {
+    if (!lastCaptureRequest) return;
+    action = 'plugin.captureWindow';
+    value = JSON.stringify({
+      pluginId: lastCaptureRequest.pluginId,
+      windowId: lastCaptureRequest.windowId
+    });
+  }
+  const isPlugin = action.startsWith('plugin.');
   busy = true;
-  message('処理しています…');
+  if (isPlugin) lastPluginError = '';
+  if (action === 'plugin.captureWindow') {
+    let request;
+    try { request = JSON.parse(value); } catch { request = null; }
+    const target = currentState?.plugins?.windows?.find(item =>
+      item.id === request?.windowId);
+    if (!target || request?.pluginId !== currentState?.plugins?.activePluginId) {
+      busy = false;
+      lastPluginError = '撮影対象が見つかりません。一覧を取り直してください。';
+      if (currentState) renderState(currentState);
+      message(lastPluginError, true);
+      return;
+    }
+    lastCaptureRequest = {
+      pluginId: request.pluginId, windowId: target.id, pid: target.pid
+    };
+    captureBusy = true;
+    message('撮影中…');
+  } else {
+    message('処理しています…');
+  }
+  if (isPlugin && currentState) renderState(currentState);
   try {
     const result = await window.aronaMenu.action(action, value);
     if (!result?.ok) {
-      message(result?.message || '操作に失敗しました', true);
+      if (isPlugin) {
+        lastPluginError = String(result?.message || '操作に失敗しました');
+        // A capture error clears the image in the host; fetch fresh state.
+        try { renderState(await window.aronaMenu.state()); }
+        catch (stateError) {
+          lastPluginError += '\n状態更新に失敗: ' + String(stateError?.message ?? stateError);
+        }
+        message('操作に失敗しました。拡張タブに詳細を表示しています。', true);
+      } else {
+        message(result?.message || '操作に失敗しました', true);
+      }
     } else {
+      if (action === 'plugin.clearCapture') {
+        lastCaptureRequest = null;
+        closePreviewLightbox(false);
+      }
       if (result.state) renderState(result.state);
       message(result.message || '完了しました');
       if (!keepOpen.has(action)) window.aronaMenu.close();
     }
   } catch (error) {
-    message('操作できませんでした: ' + String(error?.message ?? error), true);
+    if (isPlugin) lastPluginError = String(error?.message ?? error);
+    message('操作できませんでした: ' + String(error?.message ?? error).slice(0, 200), true);
+    if (isPlugin) {
+      try { renderState(await window.aronaMenu.state()); } catch { /* Keep original error. */ }
+    }
   } finally {
     busy = false;
+    captureBusy = false;
+    if (isPlugin && currentState) renderState(currentState);
   }
 }
 
@@ -336,22 +409,10 @@ document.addEventListener('click', event => {
   if (tab) { tabTo(tab.dataset.tab); return; }
   const windowRow = event.target.closest('[data-window-id]');
   if (windowRow) {
+    if (busy || !currentState) return;
     selectedWindowId = windowRow.dataset.windowId;
     selectedWindowPluginId = windowRow.dataset.pluginId;
-    for (const item of document.querySelectorAll('[data-window-id]')) {
-      const selected = item === windowRow;
-      item.classList.toggle('selected', selected);
-      item.setAttribute('aria-pressed', String(selected));
-    }
-    const target = document.getElementById('plugin-capture');
-    const plugin = windowRow.dataset.pluginId;
-    const available = [...document.querySelectorAll('[data-action="plugin.listWindows"]')]
-      .some(item => item.dataset.value === plugin &&
-        item.dataset.captureEnabled === 'true' && !item.disabled);
-    target.disabled = !available;
-    if (available) target.dataset.value = JSON.stringify({
-      pluginId: plugin, windowId: selectedWindowId
-    });
+    renderState(currentState);
     return;
   }
   const target = event.target.closest('[data-action]');
@@ -360,6 +421,11 @@ document.addEventListener('click', event => {
 document.getElementById('close').addEventListener('click', () => window.aronaMenu.close());
 document.addEventListener('keydown', event => {
   if (event.key === 'Escape') {
+    if (!document.getElementById('plugin-lightbox').hidden) {
+      event.preventDefault();
+      closePreviewLightbox();
+      return;
+    }
     if (resizing) endResize();
     window.aronaMenu.close();
     return;
