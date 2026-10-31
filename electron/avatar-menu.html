@@ -142,7 +142,14 @@
         <button type="button" class="row" data-action="diagnostic.motion"><span>⌁</span>モーション診断<b>›</b></button>
         <button type="button" class="row" data-action="diagnostic.voice"><span>♫</span>音声診断<b>›</b></button>
       </div>
-      <div class="note">診断結果は研究所への不具合報告にも使えます。</div>
+      <div class="section-title gap"><span>MOTION LAB</span><small>AI向け歩行検証</small></div>
+      <p class="description">左右の歩行を正面・斜め・側面から9コマずつ撮影し、比較画像と足IK診断を保存します。</p>
+      <div class="stack">
+        <button type="button" class="row primary" data-action="diagnostic.motionCapture">歩行を撮影して分析資料を生成<b>›</b></button>
+        <button type="button" class="row" data-action="diagnostic.motionFolder">撮影フォルダを開く<b>›</b></button>
+      </div>
+      <p class="hint" id="motion-lab-status">未撮影</p>
+      <div class="note">画像はローカル保存のみ。開発版ではプロジェクト内 motion-lab/ に保存し、Gitには含めません。</div>
     </section>
   </div>
   <footer><span class="pulse"></span><span id="feedback" role="status" aria-live="polite">FRAME / READY</span></footer>
