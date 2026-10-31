@@ -268,7 +268,8 @@ class FramePluginHost {
       this.windows = [];
       this.activePluginId = null;
       this.capture = null;
-      throw new Error('ウィンドウ一覧を取得できません: ' + String(error.message).slice(0, 130));
+      const detail = String(error?.stderr?.trim() || error?.message || error);
+      throw new Error('ウィンドウ一覧を取得できません:\n' + detail.slice(0, 4000));
     }
   }
 
@@ -310,7 +311,8 @@ class FramePluginHost {
       return this.capture;
     } catch (error) {
       this.capture = null;
-      throw new Error('撮影に失敗しました: ' + String(error.message).slice(0, 130));
+      const detail = String(error?.stderr?.trim() || error?.message || error);
+      throw new Error('撮影に失敗しました:\n' + detail.slice(0, 4000));
     }
   }
 }
