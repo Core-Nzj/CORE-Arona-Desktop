@@ -63,13 +63,15 @@ export function chooseMotionTransition({
   toEndFrame, blendFrames = BLEND_FRAMES, isAutomaticReturn = false
 }) {
   if (mode === 'warp') return { method: 'warp', reason: 'manual' };
-  // If either VMD lacks enough real frames (not the UI's minimum 90 frame
-  // display time), fade through the teleport rather than reading beyond keys.
+  // MMD's runtime clamps each track to its first/last key. A one-frame pose
+  // therefore remains valid across a 12-frame crossfade without extrapolating
+  // an uncontrolled bone trajectory.
   if (!fromAnimation || !toAnimation ||
       !Number.isFinite(fromFrame) || fromFrame < 0 ||
-      !Number.isFinite(fromEndFrame) || fromEndFrame - fromFrame < blendFrames + 1 ||
-      !Number.isFinite(toEndFrame) || toEndFrame < blendFrames + 1) {
-    return { method: 'warp', reason: 'insufficient-frames' };
+      !Number.isFinite(fromEndFrame) || fromEndFrame < 0 ||
+      !Number.isFinite(toEndFrame) || toEndFrame < 0 ||
+      !Number.isFinite(blendFrames) || blendFrames < 1) {
+    return { method: 'warp', reason: 'missing-animation' };
   }
   // Let a finished preview visibly return to idle instead of trying to
   // blend from the very last frame while the runtime is already looping.
