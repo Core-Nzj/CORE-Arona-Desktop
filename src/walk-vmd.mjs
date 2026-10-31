@@ -86,9 +86,13 @@ export function buildWalkingVmd({ boneNames = [], modelHeight = 10, direction = 
 
     const cycle = Math.sin(TAU * phase);
     const doubleStep = Math.cos(2 * TAU * phase);
-    // Turn toward travel while keeping the torso and face partly readable.
+    // MMD rigs commonly make 下半身 and 上半身 separate children of センター.
+    // Previously the chest turned +12 degrees, opposite the travel direction,
+    // leaving FRAME's face pointed toward the viewer while its legs walked sideways.
+    // Face the chest almost along the path; let the neck open just a little
+    // toward the camera so the character stays readable from a desktop view.
     key('hip', frame, quaternionMultiply(QY(-sign * 55 * DEG), QZ(1.8 * DEG * cycle)));
-    key('upper', frame, quaternionMultiply(QY(sign * 12 * DEG), QZ(-2.5 * DEG * cycle)));
+    key('upper', frame, quaternionMultiply(QY(-sign * 78 * DEG), QZ(-2.5 * DEG * cycle)));
     key('neck', frame, QY(sign * 8 * DEG));
     key('groove', frame, id, [0, height * 0.004 * (1 - doubleStep), 0]);
 
