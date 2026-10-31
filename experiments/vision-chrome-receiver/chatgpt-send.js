@@ -31,9 +31,28 @@ function frameVerifyEmptyChatGPTComposer() {
   )) {
     return { ok: false, reason: 'existing-attachment' };
   }
-  const sendButton = form.querySelector(
-    'button[data-testid="send-button"],button[data-testid="fruitjuice-send-button"]'
-  );
+  // ChatGPT has multiple composer layouts. Search only inside the
+  // verified composer/form, never via an unrestricted document-wide button.
+  const composerRoot = editor.closest('[data-testid="composer"]') ||
+    editor.closest('[data-chatgpt-composer]') || form;
+  const buttonSelectors = [
+    'button#composer-submit-button',
+    'button[data-testid="send-button"]',
+    'button[data-testid="fruitjuice-send-button"]',
+    'button[aria-label="Send prompt"]',
+    'button[aria-label="Send message"]',
+    'button[aria-label="送信"]',
+    'button[aria-label="メッセージを送信"]',
+    'button.composer-submit-btn',
+    'button[type="submit"]'
+  ];
+  const sendButton = buttonSelectors.map(selector => {
+    return form.querySelector(selector) ||
+      (composerRoot !== form ? composerRoot.querySelector(selector) : null);
+  }).find(button => {
+    return button && button.tagName?.toUpperCase() !== 'INPUT' &&
+      (typeof button.getClientRects !== 'function' || button.getClientRects().length > 0);
+  }) || null;
   if (sendButton && !sendButton.disabled &&
       sendButton.getAttribute('aria-disabled') !== 'true') {
     return { ok: false, reason: 'existing-draft' };
@@ -117,9 +136,28 @@ async function frameSendPreparedImageToChatGPT(expectedUrl, baselineImages = [])
     const uploading = !!scope.querySelector(
       '[role="progressbar"],[data-testid*="upload-progress"],[data-testid*="uploading"]'
     );
-    const sendButton = form.querySelector(
-      'button[data-testid="send-button"],button[data-testid="fruitjuice-send-button"]'
-    );
+      // ChatGPT has multiple composer layouts. Search only inside the
+      // verified composer/form, never via an unrestricted document-wide button.
+      const composerRoot = editor.closest('[data-testid="composer"]') ||
+        editor.closest('[data-chatgpt-composer]') || form;
+      const buttonSelectors = [
+        'button#composer-submit-button',
+        'button[data-testid="send-button"]',
+        'button[data-testid="fruitjuice-send-button"]',
+        'button[aria-label="Send prompt"]',
+        'button[aria-label="Send message"]',
+        'button[aria-label="送信"]',
+        'button[aria-label="メッセージを送信"]',
+        'button.composer-submit-btn',
+        'button[type="submit"]'
+      ];
+      const sendButton = buttonSelectors.map(selector => {
+        return form.querySelector(selector) ||
+          (composerRoot !== form ? composerRoot.querySelector(selector) : null);
+      }).find(button => {
+        return button && button.tagName?.toUpperCase() !== 'INPUT' &&
+          (typeof button.getClientRects !== 'function' || button.getClientRects().length > 0);
+      }) || null;
     const buttonReady = !!sendButton && sendButton.isConnected &&
       !sendButton.disabled && sendButton.getAttribute('aria-disabled') !== 'true';
     diagnostics.imageDetected = hasOwnImage;
