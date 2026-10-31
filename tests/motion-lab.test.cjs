@@ -27,6 +27,27 @@ test('capture plan includes both directions, exact phase offsets and three views
   assert.throws(() => labCameraAlpha('oblique',1));
 });
 
+test('camera framing enlarges small silhouettes without clipping the widest angle', async () => {
+  const { labZoomForBounds, LAB_MAX_ZOOM, LAB_TARGET_HEIGHT_SHARE } =
+    await import('../src/motion-lab.mjs');
+  assert.equal(LAB_TARGET_HEIGHT_SHARE, 0.74);
+  const smallModel = [
+    {width: 80, height: 230},
+    {width: 64, height: 220},
+    {width: 75, height: 225}
+  ];
+  const zoom = labZoomForBounds(smallModel, 476, 720);
+  assert.ok(zoom > 2 && zoom < 2.5,
+    'Small avatar should fill most of the picture instead of remaining tiny');
+  assert.equal(labZoomForBounds([{width:400,height:500}],476,720),1);
+  assert.equal(labZoomForBounds([{width:5,height:5}],476,720),LAB_MAX_ZOOM);
+  assert.equal(labZoomForBounds([],476,720),1);
+  assert.equal(labZoomForBounds([{width:NaN,height:100}],476,720),1);
+  assert.equal(labZoomForBounds([{width:20,height:100}],0,720),1);
+  // A wide pose must limit zoom before any body part reaches the image edge.
+  assert.ok(labZoomForBounds([{width:450,height:100}],476,720) <= 1);
+});
+
 test('output directory is inside the checkout in development but writable when packaged', () => {
   assert.equal(motionLabRoot('/code/frame','/user/frame',false),path.join('/code/frame','motion-lab'));
   assert.equal(motionLabRoot('/code/frame','/user/frame',true),path.join('/user/frame','motion-lab'));
@@ -65,8 +86,10 @@ test('save accepts only bounded PNGs and persists local JSON/gallery/latest file
   await writeMotionLabImage(session,'sheet-left-front.png',tinyPng,{view:'front',direction:-1});
   const dest = await completeMotionLab(session,{
     modelName:'private-sample.pmx',modelHeight:15,stride:1.2,
-    captureProfile:{background:'#969AA4', cameraFov:0.7, fixedCameraBeta:Math.PI / 2,
-      groundReference:'projected initial model bounds minimum Y'},
+    captureProfile:{background:'#969AA4', cameraFov:0.7, cameraRadius:4.5,
+      framingZoom:2.4, targetHeightShare:0.74, imageMaxWidth:960,
+      imageMaxHeight:1440, fixedCameraBeta:Math.PI / 2,
+      groundReference:'visible silhouette bottom at F00'},
     bones:{leftIK:'左足ＩＫ'}
   });
   const manifest = JSON.parse(await fs.readFile(path.join(dest,'manifest.json'),'utf8'));
@@ -75,8 +98,11 @@ test('save accepts only bounded PNGs and persists local JSON/gallery/latest file
   assert.equal(manifest.modelName,'private-sample.pmx');
   assert.equal(manifest.captureProfile.background, '#969AA4');
   assert.equal(manifest.captureProfile.cameraFov, 0.7);
+  assert.equal(manifest.captureProfile.cameraRadius, 4.5);
+  assert.equal(manifest.captureProfile.framingZoom, 2.4);
+  assert.equal(manifest.captureProfile.imageMaxHeight, 1440);
   assert.ok(manifest.captureProfile.groundReference.includes('initial'));
-  assert.ok((await fs.readFile(path.join(dest,'REVIEW_GUIDE.md'),'utf8')).includes('GROUND REF'));
+  assert.ok((await fs.readFile(path.join(dest,'REVIEW_GUIDE.md'),'utf8')).includes('VISUAL BASELINE'));
   assert.ok((await fs.readFile(path.join(dest,'index.html'),'utf8')).includes('sheet-left-front.png'));
   assert.ok((await fs.readFile(path.join(root,'latest.html'),'utf8')).includes('index.html'));
   const latest = JSON.parse(await fs.readFile(path.join(root,'latest.json'),'utf8'));
