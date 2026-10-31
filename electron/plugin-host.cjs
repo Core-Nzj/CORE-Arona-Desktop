@@ -248,11 +248,11 @@ class FramePluginHost {
           manifest.size > 8192 || capture.size > 128 * 1024) {
         throw new Error('プラグインファイルが不正です');
       }
-      currentHash.update(await fs.readFile(manifestPath)).update('\\0');
+      currentHash.update(await fs.readFile(manifestPath)).update('\0');
     }
     currentHash.update(await fs.readFile(plugin.scriptPath));
     if (hasCapture) {
-      currentHash.update('\\0').update(await fs.readFile(plugin.capturePath));
+      currentHash.update('\0').update(await fs.readFile(plugin.capturePath));
     }
     const currentFingerprint = currentHash.digest('hex');
     if (currentFingerprint !== plugin.fingerprint) {
