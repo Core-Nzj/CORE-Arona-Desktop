@@ -8,6 +8,7 @@
   </head>
   <body class="startup-pending">
     <main id="app">
+      <div id="avatar-stage" aria-label="FRAME アバター領域">
       <canvas id="avatar-canvas" aria-label="3Dアバター"></canvas>
       <canvas id="digital-warp-canvas" aria-hidden="true" hidden></canvas>
       <!-- CSS-only animated transfer starts at the first paint, before Babylon loads. -->
@@ -21,6 +22,7 @@
           <button id="quit-app" type="button">終了</button>
         </div>
       </section>
+      </div>
     </main>
     <script type="module" src="/src/renderer.js"></script>
   </body>
