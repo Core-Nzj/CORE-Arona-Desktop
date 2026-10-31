@@ -137,8 +137,13 @@ function renderState(state) {
   const selected = entries.find(entry => entry.id === library.selectedId);
   const selectedIdle = entries.find(entry => entry.id === library.idleId);
   document.getElementById('motion-count').textContent = entries.length + '件';
-  for (const choice of document.querySelectorAll('.transition-choice')) {
+  for (const choice of document.querySelectorAll('.transition-choice[data-action="motion.transition"]')) {
     const selected = choice.dataset.value === (state.motionTransitionMode || 'auto');
+    choice.classList.toggle('selected', selected);
+    choice.setAttribute('aria-pressed', String(selected));
+  }
+  for (const choice of document.querySelectorAll('.fps-choice')) {
+    const selected = Number(choice.dataset.value) === (state.renderFrameRate || 60);
     choice.classList.toggle('selected', selected);
     choice.setAttribute('aria-pressed', String(selected));
   }
@@ -277,7 +282,7 @@ const keepOpen = new Set([
   'voice.autoStart', 'voice.autoHide', 'voice.appHide',
   'motion.folder', 'motion.refresh', 'motion.preview', 'motion.next',
   'motion.previous', 'motion.setIdle', 'motion.stop', 'motion.resetIdle', 'motion.warpToggle',
-  'motion.transition'
+  'motion.transition', 'render.fps'
 ]);
 async function runAction(action, value) {
   if (busy) return;
