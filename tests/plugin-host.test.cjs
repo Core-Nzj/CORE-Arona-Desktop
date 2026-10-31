@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
-const { FramePluginHost, normalizeManifest, normalizeWindows } =
+const { FramePluginHost, normalizeManifest, normalizeWindows, normalizeCapture } =
   require('../electron/plugin-host.cjs');
 
 const ID = 'frame.vision.windows';
@@ -107,4 +107,70 @@ test('plugin is discovered only if its entry exists and is a regular file', asyn
   const host = new FramePluginHost({ dataDirectory });
   await host.initialize();
   assert.equal(host.state().entries.length, 0);
+});
+
+const PNG_ONE_PIXEL = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl8aUUAAAAASUVORK5CYII=';
+
+test('capture-enabled plugin requires new approval and never persists screenshots', async t => {
+  const { dataDirectory, dir } = await fixture(t);
+  const upgraded = {
+    ...manifest, name: '視覚 / ウィンドウ一覧と撮影',
+    captureEntry: 'capture-window.ps1',
+    permissions: ['window-titles', 'window-capture']
+  };
+  await fs.writeFile(path.join(dir, 'plugin.json'), JSON.stringify(upgraded));
+  const capturePath = path.join(dir, 'capture-window.ps1');
+  await fs.writeFile(capturePath, '# capture test');
+  let captureCalls = 0;
+  const host = new FramePluginHost({
+    dataDirectory, platform: 'win32',
+    runListScript: async () => [{ id: '0x1', pid: 42, title: 'private window' }],
+    runCapture: async () => {
+      captureCalls++;
+      return { image: PNG_ONE_PIXEL, width: 1, height: 1, mode: 'PrintWindow' };
+    }
+  });
+  await host.initialize();
+  assert.equal(host.state().entries[0].captureEnabled, true);
+  await assert.rejects(host.captureWindow(ID, '0x1'), /権限/);
+  await host.setEnabled(ID, true);
+  await host.listWindows(ID);
+  assert.deepEqual(host.state().windows[0].pid, 42);
+  await assert.rejects(host.captureWindow(ID, '0x99'), /存在しません/);
+  const image = await host.captureWindow(ID, '0x1');
+  assert.equal(image.dataUrl, 'data:image/png;base64,' + PNG_ONE_PIXEL);
+  assert.equal(image.title, 'private window');
+  assert.equal(captureCalls, 1);
+  const saved = await fs.readFile(host.preferencesPath, 'utf8');
+  assert.equal(saved.includes('private window'), false);
+  assert.equal(saved.includes(PNG_ONE_PIXEL), false);
+  host.clearCapture();
+  assert.equal(host.state().capture, null);
+  await fs.writeFile(capturePath, '# modified; needs approval');
+  await assert.rejects(host.captureWindow(ID, '0x1'), /更新されています/);
+  await host.refresh();
+  assert.equal(host.state().entries[0].enabled, false);
+});
+
+test('legacy list-only plugin never authorizes capture', async t => {
+  const { dataDirectory } = await fixture(t);
+  const host = new FramePluginHost({
+    dataDirectory, platform: 'win32',
+    runListScript: async () => [{ id: '0xff', pid: 123, title: 'x' }]
+  });
+  await host.initialize();
+  await host.setEnabled(ID, true);
+  await host.listWindows(ID);
+  assert.equal(host.state().entries[0].captureEnabled, false);
+  await assert.rejects(host.captureWindow(ID, '0xff'), /撮影対応プラグイン/);
+});
+
+test('capture result rejects non-PNG, malformed dimensions and untrusted modes', () => {
+  assert.throws(() => normalizeCapture({ image: 'not base64!' }), /不正/);
+  assert.throws(() => normalizeCapture({
+    image: PNG_ONE_PIXEL, width: 2, height: 1, mode: 'PrintWindow'
+  }), /不正/);
+  assert.throws(() => normalizeCapture({
+    image: PNG_ONE_PIXEL, width: 1, height: 1, mode: 'Other'
+  }), /不正/);
 });
