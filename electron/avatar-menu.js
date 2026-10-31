@@ -4,6 +4,27 @@ const feedback = document.getElementById('feedback');
 const voiceList = document.getElementById('voice-list');
 const emotionList = document.getElementById('emotion-list');
 const motionList = document.getElementById('motion-list');
+const textSizeSlider = document.getElementById('text-size');
+const textSizeValue = document.getElementById('text-size-value');
+
+function applyTextSize(percent) {
+  if (!Number.isInteger(percent) || percent < 70 || percent > 160 || percent % 5 !== 0) return;
+  document.documentElement.style.setProperty('--text-scale', String(percent / 100));
+  textSizeSlider.value = String(percent);
+  textSizeSlider.style.setProperty('--range-progress', ((percent - 70) / 90 * 100) + '%');
+  textSizeSlider.setAttribute('aria-valuetext', percent + '%');
+  textSizeValue.textContent = percent + '%';
+}
+function saveTextSize() {
+  window.aronaMenu.setTextSize(Number(textSizeSlider.value));
+}
+textSizeSlider.addEventListener('input', () => applyTextSize(Number(textSizeSlider.value)));
+textSizeSlider.addEventListener('change', saveTextSize);
+document.getElementById('text-size-reset').addEventListener('click', () => {
+  applyTextSize(100);
+  saveTextSize();
+});
+
 let busy = false;
 
 function message(value, error = false) {
@@ -35,6 +56,7 @@ function makeOption(label, id, selected, enabled, action) {
 }
 function renderState(state) {
   if (!state || typeof state !== 'object') return;
+  applyTextSize(state.textSize);
   document.getElementById('model-name').textContent = state.modelName || '未選択';
   document.getElementById('motion-status').textContent = state.motionStatus || '標準待機モーション';
   const library = state.motionLibrary || {};

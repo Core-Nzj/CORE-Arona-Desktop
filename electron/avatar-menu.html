@@ -36,6 +36,16 @@
         <button type="button" class="row" data-action="zoom.in">＋ 拡大</button>
       </div>
       <p class="hint">モデル上のホイールでも拡大・縮小できます。</p>
+      <div class="section-title gap"><span>APPEARANCE</span><small>表示設定</small></div>
+      <div class="text-size-control">
+        <div class="text-size-heading">
+          <label for="text-size">テキストサイズ</label>
+          <output id="text-size-value" for="text-size">115%</output>
+        </div>
+        <input type="range" id="text-size" min="70" max="160" step="5" value="115">
+        <div class="text-size-ends"><span>小さく</span><span>大きく</span></div>
+        <button type="button" class="text-size-reset" id="text-size-reset">100%にリセット</button>
+      </div>
       <div class="section-title gap"><span>MOTION</span><small>ローカルVMD</small></div>
       <div class="stack">
         <button type="button" class="row primary" data-action="motion.play">VMDを選択して1回再生<b>›</b></button>

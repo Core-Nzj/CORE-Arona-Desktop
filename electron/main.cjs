@@ -69,6 +69,7 @@ let settingsWindow = null;
 let menuWindow = null;
 let motionFolderDialogOpen = false;
 let menuLayout = { width: DEFAULT_WIDTH, height: DEFAULT_HEIGHT, zoom: 1 };
+let menuTextSize = 115;
 let menuResize = null;
 let menuLayoutSave = Promise.resolve();
 const proxyManager = new ProxyManager();
@@ -607,6 +608,9 @@ async function restoreMenuLayout() {
   try {
     const value = JSON.parse(await fs.readFile(menuLayoutFile(), 'utf8'));
     menuLayout = normalizeSavedMenuLayout(value, screen.getPrimaryDisplay().workArea);
+    if (Number.isInteger(value.textSize) && value.textSize >= 70 && value.textSize <= 160 && value.textSize % 5 === 0) {
+      menuTextSize = value.textSize;
+    }
     if (value.version !== LAYOUT_VERSION) saveMenuLayout();
   } catch {
     // Missing or invalid local preferences: use defaults.
@@ -614,7 +618,7 @@ async function restoreMenuLayout() {
 }
 
 function saveMenuLayout() {
-  const snapshot = JSON.stringify({ ...menuLayout, version: LAYOUT_VERSION }, null, 2);
+  const snapshot = JSON.stringify({ ...menuLayout, textSize: menuTextSize, version: LAYOUT_VERSION }, null, 2);
   menuLayoutSave = menuLayoutSave.catch(() => {}).then(async () => {
     const destination = menuLayoutFile();
     await fs.mkdir(path.dirname(destination), { recursive: true });
@@ -667,6 +671,7 @@ function moveMenuResize() {
 function menuState() {
   return {
     modelName: currentModelFile ? path.basename(currentModelFile) : '未選択',
+    textSize: menuTextSize,
     motionStatus: idleDiagnostics.split('\n')[0],
     motionWarpEnabled,
     motionTransitionMode,
@@ -1078,6 +1083,13 @@ app.whenReady().then(async () => {
     if (!isMenuWindow(event) || !['in', 'out', 'reset'].includes(direction)) return;
     menuLayout.zoom = changeMenuZoom(menuLayout.zoom, direction);
     menuWindow.webContents.setZoomFactor(menuLayout.zoom);
+    saveMenuLayout();
+  });
+  ipcMain.on('avatar-menu:text-size', (event, percent) => {
+    if (!isMenuWindow(event) || !Number.isInteger(percent) ||
+        percent < 70 || percent > 160 || percent % 5 !== 0) return;
+    if (menuTextSize === percent) return;
+    menuTextSize = percent;
     saveMenuLayout();
   });
   ipcMain.on('avatar-menu:close', event => {
