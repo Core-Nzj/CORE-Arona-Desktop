@@ -62,7 +62,7 @@ class VisionBrowserAdapter {
     });
     try { await this.#starting; }
     catch (error) {
-      server.close();
+      try { server.close(); } catch { /* Listening did not start. */ }
       throw new Error('Chrome接続ポートを開始できません: ' + (error?.code || 'unknown'));
     } finally { this.#starting = null; }
   }
@@ -88,7 +88,10 @@ class VisionBrowserAdapter {
     }
     if (req.url !== '/take' || req.method !== 'POST') return reply(404, 'Not found');
     const pending = this.#pending;
-    if (!pending || pending.signal?.aborted) return reply(410, 'No image available');
+    if (!pending || pending.signal?.aborted ||
+        (pending.expiresAt && Date.now() >= pending.expiresAt)) {
+      return reply(410, 'No image available');
+    }
     const match = /^Bearer ([a-f0-9]{64})$/.exec(req.headers.authorization || '');
     if (!match || !safeToken(match[1]) ||
         !timingSafeEqual(Buffer.from(match[1], 'hex'), Buffer.from(pending.token, 'hex'))) {
@@ -124,7 +127,7 @@ class VisionBrowserAdapter {
     res.end(bytes);
   }
 
-  async deliver({ requestId, destinationId, mimeType, imageBytes, signal } = {}) {
+  async deliver({ requestId, destinationId, mimeType, imageBytes, signal, expiresAt } = {}) {
     if (destinationId !== DESTINATION_ID || mimeType !== 'image/png' || signal?.aborted) {
       throw new Error('Chrome受信先が利用できません');
     }
@@ -134,7 +137,7 @@ class VisionBrowserAdapter {
     if (signal?.aborted) throw new Error('受け渡しは取り消されました');
     const token = randomBytes(32).toString('hex');
     return new Promise((resolve, reject) => {
-      const pending = { requestId, token, imageBytes, signal, claimed: false,
+      const pending = { requestId, token, imageBytes, signal, expiresAt, claimed: false,
         resolve, reject };
       this.#pending = pending;
       const onAbort = () => {
