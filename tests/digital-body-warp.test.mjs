@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { DigitalBodyWarp, shouldAnimateMotionWarp } from '../src/digital-body-warp.mjs';
+import {
+  DigitalBodyWarp, shouldAnimateMotionWarp, warpColorForSeed,
+  WARP_PALETTE, WARP_HIDDEN_MS, remainingWarpHoldMs
+} from '../src/digital-body-warp.mjs';
 
 function makeWarp({ noOverlay = false, throwsOnCopy = false } = {}) {
   const context = {
@@ -106,4 +109,23 @@ test('only displayed MMD avatars use warp; hidden placeholder must not invert gu
   assert.equal(shouldAnimateMotionWarp({ ...ready, placeholderHidden: true, enabled: false }), false);
   assert.equal(shouldAnimateMotionWarp({ ...ready, placeholderHidden: true, animate: false }), false);
   assert.equal(shouldAnimateMotionWarp({ ...ready, placeholderHidden: true, available: false }), false);
+});
+
+test('digital fragments use 60:30:10 cyan, deep blue and turquoise', () => {
+  assert.deepEqual(WARP_PALETTE, ['65, 197, 255', '48, 142, 224', '64, 221, 207']);
+  const counts = [0, 0, 0];
+  for (let i = 0; i < 1000; i++) {
+    const picked = warpColorForSeed((i + 0.5) / 1000);
+    counts[WARP_PALETTE.indexOf(picked)]++;
+  }
+  assert.deepEqual(counts, [600, 300, 100]);
+});
+
+test('body stays entirely hidden for at least 1000ms after disappearing', () => {
+  assert.equal(WARP_HIDDEN_MS, 1000);
+  assert.equal(remainingWarpHoldMs(500, 500), 1000);
+  assert.equal(remainingWarpHoldMs(500, 750), 750);
+  assert.equal(remainingWarpHoldMs(500, 1499), 1);
+  assert.equal(remainingWarpHoldMs(500, 1500), 0);
+  assert.equal(remainingWarpHoldMs(500, 1900), 0);
 });
