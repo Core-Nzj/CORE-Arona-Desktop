@@ -97,3 +97,14 @@ Windows PowerShellが必要です。Windows以外の環境ではプラグイン�
 FRAMEの「拡張」→撮影→「CHROME BRIDGE / EXPERIMENT」で受け渡し許可→「Chrome受信待機を開始」→認証コードをコピー→Chrome拡張に貼り付け→受信、の順で試せます。受信待機は60秒・一度限りで、FRAMEパネルを明示的に閉じれば取消します。実機での受信テストは未確認です。
 
 受信時点では画像はChrome拡張の小窓に表示されるだけで、ChatGPTには添付されません。既存の読み上げChrome拡張とは独立しており、FRAMEの音声/MMDには依存しません。
+
+## 第4工程: ChatGPT通常Chatへの明示的な添付（2026-10-31）
+
+FRAME→Chrome受信の実機成功を踏まえ、研究用Chrome拡張をv0.2.0へ更新しました。
+
+- 「Chrome受信」後に現れる「CHATGPT / ATTACHMENT TEST」で、現在の会話タブを確認してから新たな許可チェックを入れます。
+- 「ChatGPTの入力欄へ添付」をクリックしたときだけ、PNGのメモリ内ファイルを入力欄に渡す実験を行います。操作自体は画像の添付成功を保証しないため、ChatGPT側のサムネイルを目視確認してください。
+- ChatGPTの送信ボタンは押しません。添付操作の時点でChatGPTサーバーへの画像アップロードが起こり得るため、同意画面でも通知します。
+- Chrome拡張に「activeTab」「scripting」の一時権限を追加。常駐スクリプトや全ドメインの権限は追加せず、対象は `https://chatgpt.com` のみです。
+- Chromeの拡張カードで「再読み込み」してから試してください。FRAME・非公開視覚スクリプトの更新は不要です。
+- 詳細は [研究用Chrome拡張 v0.2](../experiments/vision-chrome-receiver/README.md)。ChatGPT側への実機添付確認は未実施です。
