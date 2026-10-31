@@ -2,7 +2,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
-  stageInDisplay, cursorHitsStageRects, sanitizeHitRectangles, clampAvatarPosition
+  stageInDisplay, cursorHitsStageRects, sanitizeHitRectangles, clampAvatarPosition,
+  avatarMovementLimits, unboundedOverlayZoom, scaleAvatarHitRectangles
 } = require('../electron/avatar-overlay.cjs');
 
 const stage = { x: 2120, y: 160, width: 580, height: 780 };
@@ -36,14 +37,57 @@ test('untrusted renderer masks are clamped and malformed masks cannot intercept 
   assert.deepEqual(sanitizeHitRectangles(new Array(2001).fill({x:1,y:1,width:1,height:1}),stage), []);
 });
 
-test('avatar travels inside work area and can jump between differently placed displays', () => {
-  assert.deepEqual(clampAvatarPosition({x:3100,y:-999,width:580,height:780},
-    {x:1920,y:0,width:1920,height:1040}),
-  {x:3100,y:0,width:580,height:780});
+test('dragging can put the real model beyond all four screen edges', () => {
+  const display = {x:0,y:0,width:1920,height:1080};
+  const model = {x:50,y:100,width:250,height:650};
+  const hit = [{x:80,y:140,width:160,height:480}];
+  const limits = avatarMovementLimits(model,display,hit);
+  assert.deepEqual(limits,{minX:-192,maxX:1792,minY:-572,maxY:892});
+  assert.deepEqual(clampAvatarPosition({...model,x:-100,y:-250},display,hit),
+    {...model,x:-100,y:-250});
+  assert.deepEqual(clampAvatarPosition({...model,x:2300,y:1400},display,hit),
+    {...model,x:1792,y:892});
+  assert.deepEqual(clampAvatarPosition({...model,x:-1000,y:-2000},display,hit),
+    {...model,x:-192,y:-572});
+  // Even when the stage center sits outside the display, 48px of actual body
+  // still remains available for dragging it back.
+  assert.equal(limits.minX+240,48);
+  assert.equal(limits.maxX+80,1872);
+});
+
+test('the safety limit includes the taskbar region and keeps cursor anchoring', () => {
+  const display = {x:1920,y:-120,width:1600,height:900};
+  const model = {x:2400,y:0,width:500,height:900};
+  const hit = [{x:120,y:200,width:300,height:440}];
+  assert.deepEqual(clampAvatarPosition({...model,x:2000,y:650},display,hit),
+    {...model,x:2000,y:532});
+  // A negative-Y second monitor and a stage wider than it remain recoverable.
+  const large = {x:-500,y:0,width:1900,height:1100};
+  const area = {x:0,y:0,width:1600,height:900};
+  const result = clampAvatarPosition({...large,x:-1000},area,[{x:600,y:300,width:500,height:500}]);
+  assert.equal(result.x,-1052);
+});
+
+test('zoom retains its center even when the stage extends outside the screen', () => {
+  const old = {x:-100,y:-40,width:500,height:700};
+  const bounds = unboundedOverlayZoom(old,{
+    bounds:{x:0,y:0,width:700,height:980},scale:4,cameraZoom:1.5
+  });
+  assert.deepEqual(bounds,{bounds:{x:-200,y:-180,width:700,height:980},
+    scale:4,cameraZoom:1.5});
+  assert.deepEqual(scaleAvatarHitRectangles(
+    [{x:70,y:80,width:200,height:450}],old,bounds.bounds),
+    [{x:98,y:112,width:280,height:630}]);
+});
+
+test('partial stage overflow is possible on displays to the left and right', () => {
+  const bounds = {x:3100,y:-999,width:580,height:780};
+  assert.deepEqual(clampAvatarPosition(bounds,
+    {x:1920,y:0,width:1920,height:1040}),{...bounds,y:-646});
   assert.deepEqual(clampAvatarPosition({x:4000,y:600,width:580,height:780},
     {x:1920,y:0,width:1920,height:1040}),
-  {x:3260,y:260,width:580,height:780});
+  {x:3316,y:600,width:580,height:780});
   assert.deepEqual(clampAvatarPosition({x:-2300,y:200,width:580,height:780},
     {x:-1920,y:-200,width:1600,height:880}),
-  {x:-1920,y:-100,width:580,height:780});
+  {x:-2204,y:200,width:580,height:780});
 });
