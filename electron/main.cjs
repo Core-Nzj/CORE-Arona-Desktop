@@ -93,6 +93,8 @@ let proxyStartup = null;
 let currentModelFile = null;
 let dragTimer = null;
 let dragStart = null;
+let walkTimer = null;
+let walkState = null;
 let idleDiagnostics = 'モーションの読み込みを待っています';
 let motionDirectory = null;
 let motionEntries = [];
@@ -532,6 +534,48 @@ function setAvatarRegion(rects) {
   if (checked.length) mainWindow.setShape(checked);
 }
 
+// Native window motion is driven here rather than by DOM mouse deltas, which
+// are unreliable while a transparent, shaped Electron window is moving.
+function stopAvatarWalk(notify = false) {
+  if (walkTimer !== null) clearInterval(walkTimer);
+  walkTimer = null;
+  walkState = null;
+  if (notify && mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('avatar:walk-stopped');
+  }
+}
+
+function beginAvatarWalk(direction, speed) {
+  stopAvatarWalk();
+  if (!mainWindow || mainWindow.isDestroyed() ||
+      ![-1, 1].includes(direction) || !Number.isFinite(speed)) return;
+  stopAvatarDrag();
+  const actualSpeed = Math.max(20, Math.min(360, speed));
+  const bounds = mainWindow.getBounds();
+  walkState = { direction, speed: actualSpeed, x: bounds.x, last: performance.now() };
+  walkTimer = setInterval(() => {
+    const state = walkState;
+    if (!state || !mainWindow || mainWindow.isDestroyed()) {
+      stopAvatarWalk();
+      return;
+    }
+    const bounds = mainWindow.getBounds();
+    const area = screen.getDisplayMatching(bounds).workArea;
+    const minimum = area.x;
+    const maximum = Math.max(minimum, area.x + area.width - bounds.width);
+    const now = performance.now();
+    const dt = Math.max(0, Math.min(0.1, (now - state.last) / 1000));
+    state.last = now;
+    state.x = Math.min(maximum, Math.max(minimum, state.x + state.direction * state.speed * dt));
+    const next = Math.round(state.x);
+    if (next !== bounds.x) mainWindow.setPosition(next, bounds.y);
+    if ((state.direction > 0 && state.x >= maximum) ||
+        (state.direction < 0 && state.x <= minimum)) {
+      stopAvatarWalk(true); // Stop before the model would slide beyond the screen.
+    }
+  }, 16);
+}
+
 function stopAvatarDrag() {
   if (dragTimer !== null) {
     clearInterval(dragTimer);
@@ -542,6 +586,7 @@ function stopAvatarDrag() {
 
 function startAvatarDrag() {
   if (!mainWindow || mainWindow.isDestroyed()) return;
+  stopAvatarWalk(true);
   stopAvatarDrag();
   dragStart = {
     pointer: screen.getCursorScreenPoint(),
@@ -571,6 +616,7 @@ function startAvatarDrag() {
 
 function zoomAvatarWindow(action) {
   if (!mainWindow || mainWindow.isDestroyed()) return;
+  stopAvatarWalk(true);
   const steps = action === 'in' ? 1 : action === 'out' ? -1
     : typeof action === 'number' && Number.isFinite(action) && Math.abs(action) <= 2
       ? action : null;
@@ -801,7 +847,17 @@ async function executeMenuAction(action, value) {
       mainWindow.webContents.send('avatar:motion-command', { type: 'play', ...motion });
       return 'VMDを送信しました: ' + motion.name;
     }
+    case 'motion.walkLeft': case 'motion.walkRight':
+      mainWindow.webContents.send('avatar:motion-command', {
+        type: 'walk', direction: action === 'motion.walkLeft' ? -1 : 1
+      });
+      return action === 'motion.walkLeft' ? '左へ歩きます' : '右へ歩きます';
+    case 'motion.walkStop':
+      stopAvatarWalk();
+      mainWindow.webContents.send('avatar:motion-command', { type: 'walk-stop' });
+      return '歩行を停止します';
     case 'motion.stop':
+      stopAvatarWalk();
       mainWindow.webContents.send('avatar:motion-command', { type: 'stop' });
       return '待機モーションへ戻します';
     case 'motion.folder': {
@@ -1037,6 +1093,7 @@ function createWindow() {
     }
   });
   mainWindow.on('closed', () => {
+    stopAvatarWalk();
     closeAvatarMenu();
     stopAvatarDrag();
     voiceSynthesis?.abort();
@@ -1120,6 +1177,15 @@ app.whenReady().then(async () => {
   });
   ipcMain.on('avatar-menu:close', event => {
     if (isMenuWindow(event)) closeAvatarMenu();
+  });
+  ipcMain.on('avatar:walk-velocity', (event, direction, speed) => {
+    if (!isOurWindow(event)) return;
+    if (direction === 0) {
+      stopAvatarWalk();
+    } else if ([-1, 1].includes(direction) && Number.isFinite(speed) &&
+               speed >= 0 && speed <= 1000 && currentModelFile && !exitWarpPending) {
+      beginAvatarWalk(direction, speed);
+    }
   });
   ipcMain.on('avatar:zoom', (event, action) => {
     if (isOurWindow(event) && currentModelFile) zoomAvatarWindow(action);
@@ -1286,6 +1352,7 @@ app.on('before-quit', event => {
       event.preventDefault();
       if (exitWarpPending) return;
       exitWarpPending = true;
+      stopAvatarWalk();
       closeAvatarMenu(); // The popup must not cover the disappearing avatar.
       mainWindow.webContents.send('avatar:prepare-quit');
       // The 260ms exit transfer cannot block quitting if rendering stalls.
