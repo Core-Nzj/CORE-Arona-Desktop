@@ -452,6 +452,88 @@ async function switchMotionWithWarp(requestId, model, change, animate = true) {
   }
 }
 
+// A composite is short-lived: blend the current VMD at its current frame into
+// the next VMD's first 12 frames. Afterwards bind the target's own runtime
+// animation at frame 12 so playback continues without restarting.
+async function switchMotionWithBlend(requestId, model, targetAnimation, change) {
+  const source = currentMotionAnimation;
+  const oldHandle = currentMotionHandle;
+  const oldFrame = mmdRuntime.currentFrameTime;
+  const oldDuration = activeImportedMotion?.endFrame ?? customIdleMotion?.endFrame ?? IDLE_FRAMES;
+  const spanParams = blendSpanParameters(oldFrame);
+  let compositeHandle = null;
+  let blendReady = false;
+  try {
+    const composite = new MmdCompositeAnimation('FRAME crossfade');
+    const outgoing = new MmdAnimationSpan(
+      source, spanParams.outgoing.start, spanParams.outgoing.end, spanParams.outgoing.offset);
+    outgoing.easeOutFrameTime = BLEND_FRAMES;
+    const incoming = new MmdAnimationSpan(
+      targetAnimation, spanParams.incoming.start, spanParams.incoming.end, spanParams.incoming.offset);
+    incoming.easeInFrameTime = BLEND_FRAMES;
+    composite.addSpan(outgoing);
+    composite.addSpan(incoming);
+
+    compositeHandle = model.createRuntimeAnimation(composite);
+    model.setRuntimeAnimation(compositeHandle);
+    mmdRuntime.setManualAnimationDuration(BLEND_FRAMES);
+    await mmdRuntime.seekAnimation(0, true);
+    await mmdRuntime.playAnimation();
+
+    const deadline = performance.now() + 1500;
+    while (mmdRuntime.currentFrameTime < BLEND_FRAMES - 0.5 &&
+           performance.now() < deadline &&
+           model === activeMmdModel && !exitWarpStarted) {
+      await new Promise(resolve => requestAnimationFrame(resolve));
+    }
+    blendReady = model === activeMmdModel && !exitWarpStarted &&
+      mmdRuntime.currentFrameTime >= BLEND_FRAMES - 0.5;
+    if (blendReady) {
+      // Current animation now shows the incoming pose at the blend boundary.
+      await change(BLEND_FRAMES);
+      console.info('[FRAME motion] composite crossfade completed');
+      return true;
+    }
+    console.warn('[FRAME motion] blend interrupted/timed out; using digital transfer');
+  } catch (error) {
+    console.warn('[FRAME motion] composite unavailable; using digital transfer', error);
+  } finally {
+    if (!blendReady && model === activeMmdModel && oldHandle && !exitWarpStarted) {
+      try {
+        model.setRuntimeAnimation(oldHandle);
+        mmdRuntime.setManualAnimationDuration(oldDuration);
+        await mmdRuntime.seekAnimation(Math.min(oldFrame, oldDuration - 1), true);
+        await mmdRuntime.playAnimation();
+      } catch (error) {
+        console.warn('[FRAME motion] unable to restore source clip', error);
+      }
+    }
+    if (compositeHandle && model === activeMmdModel) {
+      model.destroyRuntimeAnimation(compositeHandle);
+    }
+  }
+  return false;
+}
+
+async function switchMotionWithPolicy(
+  requestId, model, targetAnimation, change, { animate = true, automaticReturn = false } = {}
+) {
+  const currentFrame = mmdRuntime.currentFrameTime;
+  const choice = chooseMotionTransition({
+    mode: motionTransitionMode,
+    fromAnimation: currentMotionAnimation,
+    toAnimation: targetAnimation,
+    fromFrame: currentFrame,
+    fromEndFrame: currentMotionAnimation?.endFrame,
+    toEndFrame: targetAnimation?.endFrame,
+    isAutomaticReturn: automaticReturn
+  });
+  if (animate && !exitWarpStarted && choice.method === 'blend') {
+    if (await switchMotionWithBlend(requestId, model, targetAnimation, change)) return;
+  }
+  await switchMotionWithWarp(requestId, model, () => change(0), animate);
+}
+
 function returnToIdle(requestId, message) {
   return queueMotionTransition(async () => {
     if (requestId !== motionRequestId || !activeMmdModel || !idleAnimationHandle) return;
