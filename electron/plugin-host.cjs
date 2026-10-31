@@ -237,8 +237,24 @@ class FramePluginHost {
     if (!entry.isFile() || entry.size > 128 * 1024) {
       throw new Error('プラグインの実行ファイルが不正です');
     }
-    const currentFingerprint = createHash('sha256')
-      .update(await fs.readFile(plugin.scriptPath)).digest('hex');
+    const hasCapture = Boolean(plugin.captureEnabled);
+    const currentHash = createHash('sha256');
+    if (hasCapture) {
+      const manifestPath = path.join(path.dirname(plugin.scriptPath), 'plugin.json');
+      const [manifest, capture] = await Promise.all([
+        fs.lstat(manifestPath), fs.lstat(plugin.capturePath)
+      ]);
+      if (!manifest.isFile() || !capture.isFile() ||
+          manifest.size > 8192 || capture.size > 128 * 1024) {
+        throw new Error('プラグインファイルが不正です');
+      }
+      currentHash.update(await fs.readFile(manifestPath)).update('\\0');
+    }
+    currentHash.update(await fs.readFile(plugin.scriptPath));
+    if (hasCapture) {
+      currentHash.update('\\0').update(await fs.readFile(plugin.capturePath));
+    }
+    const currentFingerprint = currentHash.digest('hex');
     if (currentFingerprint !== plugin.fingerprint) {
       throw new Error('プラグインが変更されています。再読み込みして権限を再確認してください');
     }
