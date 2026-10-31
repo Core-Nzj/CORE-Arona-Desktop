@@ -1,6 +1,7 @@
 import './style.css';
 import { rectanglesFromAlpha } from './silhouette.mjs';
 import { buildIdleVmd, IDLE_FRAMES } from './idle-vmd.mjs';
+import { captureWalkingReview } from './motion-lab-capture.mjs';
 import { WALK_FRAMES, buildWalkingVmd, walkTravelSpeed } from './walk-vmd.mjs';
 import { EmotionController } from './emotions.mjs';
 import { makeWebAudioBuffer } from './pcm-playback.mjs';
@@ -99,6 +100,7 @@ let customIdleMotion = null;
 let activeImportedMotion = null;
 let walkingMotion = null;
 let cachedWalkAnimations = new Map();
+let motionCaptureBusy = false;
 let motionRequestId = 0;
 let motionTransitionQueue = Promise.resolve();
 let isChangingMotion = false;
@@ -768,6 +770,7 @@ function stopWalkingAndRestore() {
 }
 
 function onMotionCommand(command) {
+  if (motionCaptureBusy) return; // Preserve the snapshot's deterministic pose.
   if (command?.type === 'walk') {
     void startWalking(command.direction);
     return;
@@ -806,7 +809,7 @@ function completeStartupTransfer() {
 }
 
 async function loadModel(model, { startup = false } = {}) {
-  if (!model) return;
+  if (!model || motionCaptureBusy) return;
   const seq = ++loadSequence;
   chooseButton.disabled = true;
   motionWarpEnabled = model.motionWarpEnabled !== false;
@@ -1028,6 +1031,48 @@ window.aronaDesktop.onCameraZoom(factor => {
 });
 window.aronaDesktop.onEmotionChange(setEmotion);
 window.aronaDesktop.onMotionCommand(onMotionCommand);
+window.aronaDesktop.onMotionLabStart(request => {
+  void (async () => {
+    const id = request?.id;
+    if (typeof id !== 'string') return;
+    if (motionCaptureBusy || !activeMmdModel || !activeRoot || !currentMotionHandle ||
+        walkingMotion || isChangingMotion || isSeekingIdleLoop || exitWarpStarted) {
+      await window.aronaDesktop.motionLabFinish(id, {
+        error: '撮影できません。モデルを読み込み、歩行や外部モーションを停止して待機状態にしてください'
+      });
+      return;
+    }
+    motionCaptureBusy = true;
+    const originalHandle = currentMotionHandle;
+    const originalFrame = mmdRuntime.currentFrameTime;
+    const originalDuration = mmdRuntime.animationFrameTimeDuration;
+    const wasPlaying = mmdRuntime.isAnimationPlaying;
+    try {
+      const meta = await captureWalkingReview({
+        model: activeMmdModel, root: activeRoot, camera, canvas, scene,
+        runtime: mmdRuntime, loader: idleLoader,
+        originalHandle, originalFrame, originalDuration, wasPlaying,
+        save: (name, png, info) => window.aronaDesktop.motionLabSave(id, name, png, info)
+      });
+      const outcome = await window.aronaDesktop.motionLabFinish(id, {
+        meta: { ...meta, applicationFps: engine.maxFPS }
+      });
+      if (!outcome?.ok) console.warn('[FRAME motion lab] export failed:', outcome?.message);
+    } catch (error) {
+      console.error('[FRAME motion lab] failed:', error);
+      try {
+        await window.aronaDesktop.motionLabFinish(id, {
+          error: String(error?.message ?? error).slice(0, 250)
+        });
+      } catch (finishError) {
+        console.warn('[FRAME motion lab] failed to report error', finishError);
+      }
+    } finally {
+      motionCaptureBusy = false;
+      regionDirty = true;
+    }
+  })();
+});
 window.aronaDesktop.onWalkStopped(() => {
   if (walkingMotion) stopWalkingAndRestore();
 });
@@ -1087,7 +1132,7 @@ scene.onBeforeRenderObservable.add(() => {
 engine.runRenderLoop(() => {
   scene.render();
   bodyWarp.render(performance.now());
-  if (activeMmdModel && !isChangingMotion && !isSeekingIdleLoop) {
+  if (activeMmdModel && !motionCaptureBusy && !isChangingMotion && !isSeekingIdleLoop) {
     const endFrame = activeImportedMotion?.endFrame ??
       walkingMotion?.endFrame ?? customIdleMotion?.endFrame ?? IDLE_FRAMES;
     if (mmdRuntime.currentFrameTime >= endFrame - 1) {
@@ -1108,11 +1153,11 @@ engine.runRenderLoop(() => {
   }
   // Update the hit silhouette at 5 Hz while animating; a resting model
   // no longer has a truly static outline.
-  if (activeMmdModel && performance.now() - lastSilhouetteUpdate >= 200) {
+  if (activeMmdModel && !motionCaptureBusy && performance.now() - lastSilhouetteUpdate >= 200) {
     lastSilhouetteUpdate = performance.now();
     regionDirty = true;
   }
-  if (regionDirty) {
+  if (regionDirty && !motionCaptureBusy) {
     regionDirty = false;
     applyAvatarRegion();
   }
