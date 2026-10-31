@@ -55,6 +55,7 @@ let mainWindow;
 let avatarScale = INITIAL_SCALE;
 let settingsWindow = null;
 let menuWindow = null;
+let motionFolderDialogOpen = false;
 let menuLayout = { width: DEFAULT_WIDTH, height: DEFAULT_HEIGHT, zoom: 1 };
 let menuResize = null;
 let menuLayoutSave = Promise.resolve();
@@ -725,7 +726,7 @@ function showAvatarMenu() {
     popup.focus();
   });
   popup.on('blur', () => {
-    if (menuWindow === popup && !menuResize) closeAvatarMenu();
+    if (menuWindow === popup && !menuResize && !motionFolderDialogOpen) closeAvatarMenu();
   });
   popup.on('closed', () => {
     if (menuResize?.window === popup) menuResize = null;
@@ -762,11 +763,18 @@ async function executeMenuAction(action, value) {
       mainWindow.webContents.send('avatar:motion-command', { type: 'stop' });
       return '待機モーションへ戻します';
     case 'motion.folder': {
-      const selection = await dialog.showOpenDialog(mainWindow, {
-        title: 'Motionsの保存先を選択',
-        buttonLabel: 'ライブラリとして使用',
-        properties: ['openDirectory']
-      });
+      motionFolderDialogOpen = true;
+      let selection;
+      try {
+        selection = await dialog.showOpenDialog(menuWindow || mainWindow, {
+          title: 'Motionsの保存先を選択',
+          buttonLabel: 'ライブラリとして使用',
+          properties: ['openDirectory']
+        });
+      } finally {
+        motionFolderDialogOpen = false;
+        if (menuWindow && !menuWindow.isDestroyed()) menuWindow.focus();
+      }
       if (selection.canceled || !selection.filePaths.length) return '選択をキャンセルしました';
       const previous = motionDirectory;
       motionDirectory = selection.filePaths[0];
