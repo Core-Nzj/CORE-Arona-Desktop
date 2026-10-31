@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; img-src 'self' blob:; connect-src http://127.0.0.1:32780; object-src 'none'">
+<title>FRAME / Chrome Receiver</title>
+<style>
+:root { color-scheme: dark; font-family: "Segoe UI", sans-serif; }
+body { width: 320px; margin: 0; padding: 16px; background: #1d1d1f; color: #f5f5f7; }
+h1 { font-size: 16px; font-weight: 650; margin: 0 0 6px; }
+p { color: #a1a1a6; font-size: 12px; line-height: 1.5; }
+label { display:block; font-size: 11px; margin-bottom: 6px; }
+input { width: 100%; box-sizing: border-box; border: 1px solid #47474c;
+  border-radius: 9px; padding: 9px; background: #0e0e0e; color: #fff;
+  font: 12px Consolas, monospace; }
+button { margin-top: 10px; width: 100%; padding: 10px; border: 0;
+  border-radius: 9px; background: #0071e3; color: white; cursor: pointer; font: inherit; }
+button:disabled { opacity: .5; cursor: default; }
+#status { overflow-wrap: anywhere; }
+#preview { display: block; max-width: 100%; max-height: 200px; object-fit: contain;
+  border-radius: 9px; margin: 8px auto 0; }
+#preview[hidden] { display: none; }
+</style></head>
+<body>
+<h1>FRAME / VISION RECEIVER</h1>
+<p>FRAMEで「Chrome受信待機」を開始し、認証コードを貼り付けてください。</p>
+<label for="token">使い捨て認証コード</label>
+<input id="token" type="password" autocomplete="off" spellcheck="false" maxlength="64">
+<button id="receive" type="button">FRAMEから画像を1回受け取る</button>
+<p id="status" role="status" aria-live="polite">未接続</p>
+<img id="preview" alt="FRAMEから受け取ったPNG" hidden>
+<p>ローカル表示だけです。画像保存・ChatGPTへの添付・自動送信は行いません。</p>
+<script src="popup.js"></script>
+</body></html>
