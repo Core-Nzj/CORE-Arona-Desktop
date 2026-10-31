@@ -6,6 +6,7 @@ import { makeWebAudioBuffer } from './pcm-playback.mjs';
 import { LipSyncController, mouthLevelFromSamples } from './lip-sync.mjs';
 import { SpeechPlaybackQueue } from './speech-queue.mjs';
 import { approachZoom, fovForZoom } from './camera-zoom.mjs';
+import { DigitalBodyWarp } from './digital-body-warp.mjs';
 import { Engine } from '@babylonjs/core/Engines/engine';
 import { Scene } from '@babylonjs/core/scene';
 import { ArcRotateCamera } from '@babylonjs/core/Cameras/arcRotateCamera';
@@ -28,6 +29,7 @@ RegisterMmdOutlineRenderer();
 RegisterMmdRuntimeModelAnimation();
 
 const canvas = document.getElementById('avatar-canvas');
+const bodyWarp = new DigitalBodyWarp(canvas, document.getElementById('digital-warp-canvas'));
 const status = document.getElementById('status');
 const placeholder = document.getElementById('placeholder');
 const chooseButton = document.getElementById('choose-model');
@@ -78,6 +80,7 @@ let idleInfo = '待機モーションの読込待ち';
 let observedFrameTime = 0;
 let idlePlaybackCheckTimer = null;
 let idleAnimationHandle = null;
+let currentMotionHandle = null;
 let customIdleMotion = null;
 let activeImportedMotion = null;
 let motionRequestId = 0;
@@ -369,7 +372,10 @@ async function attachIdleMotion(container) {
 
     const handle = runtimeModel.createRuntimeAnimation(animation);
     runtimeModel.setRuntimeAnimation(handle);
-    if (activeContainer === container) idleAnimationHandle = handle;
+    if (activeContainer === container) {
+      idleAnimationHandle = handle;
+      currentMotionHandle = handle;
+    }
     mmdRuntime.setManualAnimationDuration(IDLE_FRAMES);
     await mmdRuntime.seekAnimation(0, true);
     await mmdRuntime.playAnimation();
@@ -396,29 +402,55 @@ function queueMotionTransition(callback) {
   return pending;
 }
 
+// The outgoing VMD keeps moving during disappearance. Once invisible we seek
+// the incoming VMD to frame zero, then reveal it while it is playing.
+// The same-motion idle loop never invokes this transfer.
+async function switchMotionWithWarp(requestId, model, change, animate = true) {
+  const canAnimate = animate && bodyWarp.enabled && !placeholder.hidden;
+  if (canAnimate) await bodyWarp.conceal();
+  if (requestId !== motionRequestId || model !== activeMmdModel) {
+    if (canAnimate) bodyWarp.cancel();
+    return false;
+  }
+  try {
+    await change();
+    if (canAnimate) await bodyWarp.reveal();
+    return true;
+  } finally {
+    if (canAnimate) bodyWarp.cancel();
+  }
+}
+
 function returnToIdle(requestId, message) {
   return queueMotionTransition(async () => {
     if (requestId !== motionRequestId || !activeMmdModel || !idleAnimationHandle) return;
     const model = activeMmdModel;
     const previous = activeImportedMotion;
     const target = customIdleMotion || { handle: idleAnimationHandle, endFrame: IDLE_FRAMES };
+    if (currentMotionHandle === target.handle && !previous) {
+      reportIdle(message);
+      return;
+    }
     isChangingMotion = true;
     try {
-      model.setRuntimeAnimation(target.handle);
-      mmdRuntime.setManualAnimationDuration(target.endFrame);
-      await mmdRuntime.seekAnimation(0, true);
-      if (model !== activeMmdModel) return;
-      await mmdRuntime.playAnimation();
-      activeImportedMotion = null;
-      if (previous) model.destroyRuntimeAnimation(previous.handle);
-      reportIdle(message);
+      await switchMotionWithWarp(requestId, model, async () => {
+        model.setRuntimeAnimation(target.handle);
+        currentMotionHandle = target.handle;
+        mmdRuntime.setManualAnimationDuration(target.endFrame);
+        await mmdRuntime.seekAnimation(0, true);
+        if (model !== activeMmdModel) return;
+        await mmdRuntime.playAnimation();
+        activeImportedMotion = null;
+        if (previous) model.destroyRuntimeAnimation(previous.handle);
+        reportIdle(message);
+      });
     } finally {
       isChangingMotion = false;
     }
   });
 }
 
-async function playImportedMotion({ name, bytes }, asIdle = false) {
+async function playImportedMotion({ name, bytes }, asIdle = false, animate = true) {
   const requestId = ++motionRequestId;
   const model = activeMmdModel;
   if (!model || !idleAnimationHandle) {
@@ -457,8 +489,10 @@ async function playImportedMotion({ name, bytes }, asIdle = false) {
       let handle = null;
       isChangingMotion = true;
       try {
+        await switchMotionWithWarp(requestId, model, async () => {
         handle = model.createRuntimeAnimation(animation);
         model.setRuntimeAnimation(handle);
+        currentMotionHandle = handle;
         if (asIdle) {
           customIdleMotion = { handle, name, endFrame };
           activeImportedMotion = null;
@@ -474,11 +508,13 @@ async function playImportedMotion({ name, bytes }, asIdle = false) {
         reportIdle((asIdle ? 'カスタム待機モーション: ' : '外部VMD再生中: ') + name +
           '\n対応ボーン: ' + boneMatches + ' / 対応モーフ: ' + morphMatches +
           '\n終端フレーム: ' + endFrame);
+        }, animate);
       } catch (error) {
         if (model === activeMmdModel && idleAnimationHandle) {
           try {
             const target = formerIdle || { handle: idleAnimationHandle, endFrame: IDLE_FRAMES };
             model.setRuntimeAnimation(target.handle);
+            currentMotionHandle = target.handle;
             mmdRuntime.setManualAnimationDuration(target.endFrame);
             await mmdRuntime.seekAnimation(0, true);
             await mmdRuntime.playAnimation();
@@ -559,8 +595,10 @@ async function loadModel(model) {
     const oldContainer = activeContainer;
     const oldMmdModel = activeMmdModel;
     ++motionRequestId; // Invalidate pending VMD parses and transitions.
+    bodyWarp.cancel();
     activeImportedMotion = null;
     idleAnimationHandle = null;
+    currentMotionHandle = null;
     customIdleMotion = null;
     if (emotionController) {
       emotionController.dispose();
@@ -628,7 +666,7 @@ async function loadModel(model) {
     void window.aronaDesktop.restoreIdleMotion().then(motion => {
       // A manual preview or idle selection made during restore wins.
       if (seq === loadSequence && restoreAfterRequest === motionRequestId && motion) {
-        return playImportedMotion(motion, true);
+        return playImportedMotion(motion, true, false);
       }
     }).catch(error => console.warn('[CORE motion] idle restore failed:', error));
   } catch (error) {
@@ -751,6 +789,7 @@ scene.onBeforeRenderObservable.add(() => {
 
 engine.runRenderLoop(() => {
   scene.render();
+  bodyWarp.render(performance.now());
   if (activeMmdModel && !isChangingMotion && !isSeekingIdleLoop) {
     const endFrame = activeImportedMotion?.endFrame ?? customIdleMotion?.endFrame ?? IDLE_FRAMES;
     if (mmdRuntime.currentFrameTime >= endFrame - 1) {
