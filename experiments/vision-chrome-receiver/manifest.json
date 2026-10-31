@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "FRAME Vision Receiver (Research)",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "研究用FRAME画像受信・ChatGPT添付・明示許可による一回限りの送信。保存なし。",
   "action": {
     "default_title": "FRAME画像を受信",
