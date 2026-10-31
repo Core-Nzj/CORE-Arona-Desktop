@@ -146,6 +146,25 @@
           data-action="plugin.previewOpen" disabled>拡大プレビュー</button>
         <p class="hint">画像はFRAME内でのみ表示されます。保存・外部送信はしません。</p>
       </div>
+      <div class="vision-share" id="vision-share" hidden>
+        <div class="section-title"><span>IMAGE HANDOFF</span><small id="vision-share-status">未準備</small></div>
+        <p class="vision-share-label">受け渡す画像</p>
+        <p class="vision-share-value" id="vision-share-target"></p>
+        <p class="vision-share-label">送信先</p>
+        <p class="vision-share-value" id="vision-share-destination"></p>
+        <p class="hint" id="vision-share-expiry"></p>
+        <label class="vision-share-consent">
+          <input type="checkbox" id="vision-share-consent" disabled>
+          <span>この画像と送信先を確認しました。1回だけ受け渡しを許可します。</span>
+        </label>
+        <div class="motion-toolbar gap-small">
+          <button type="button" class="row primary" id="vision-share-send"
+            data-action="vision.deliverLocal" disabled>ローカル受信テスト</button>
+          <button type="button" class="row" id="vision-share-revoke"
+            data-action="vision.revoke" disabled>共有を取り消す</button>
+        </div>
+        <p class="hint">受信先はFRAME内部のみ。外部通信・保存・ChatGPTへの送信はありません。</p>
+      </div>
       <div class="note">プラグインはPC上のスクリプトを実行します。信頼できる配布元のファイルのみ導入してください。</div>
     </section>
     <section class="page" data-page="emotion" hidden>
