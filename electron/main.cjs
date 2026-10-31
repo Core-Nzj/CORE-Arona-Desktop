@@ -1023,6 +1023,19 @@ async function executeMenuAction(action, value) {
       mainWindow.webContents.send('avatar:motion-command', { type: 'idle', ...motion });
       return '待機モーションに設定しました: ' + motion.name;
     }
+    case 'render.fps': {
+      const requested = Number(value);
+      if (!FRAME_RATE_OPTIONS.includes(requested)) throw new Error('選択できないFPSです');
+      if (renderFrameRate === requested) return '表示FPS: ' + requested;
+      renderFrameRate = requested;
+      await saveModelSelection();
+      // Changing settings doesn't interrupt a gait or a held mouse drag.
+      // Recreate only their cadence timers; both preserve their location.
+      if (walkState) beginAvatarWalk(walkState.direction, walkState.speed);
+      else if (dragStart) startAvatarDrag();
+      mainWindow.webContents.send('avatar:frame-rate', renderFrameRate);
+      return '描画・モーション・移動の上限: ' + requested + ' FPS';
+    }
     case 'motion.transition':
       if (!['auto', 'blend', 'warp'].includes(value)) throw new Error('不正な遷移方式です');
       motionTransitionMode = value;
