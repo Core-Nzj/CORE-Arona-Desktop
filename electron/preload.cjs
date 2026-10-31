@@ -24,6 +24,10 @@ contextBridge.exposeInMainWorld('aronaDesktop', Object.freeze({
   reportEmotionState: (state) => ipcRenderer.send('avatar:emotions-state', state),
   onEmotionChange: (callback) => ipcRenderer.on('avatar:emotion-change', (_event, id) => callback(id)),
   onMotionCommand: (callback) => ipcRenderer.on('avatar:motion-command', (_event, command) => callback(command)),
+  onMotionLabStart: callback => ipcRenderer.on('avatar:motion-lab-start', (_event, request) => callback(request)),
+  motionLabSave: (id, name, pngData, info) =>
+    ipcRenderer.invoke('avatar:motion-lab:save', id, name, pngData, info),
+  motionLabFinish: (id, outcome) => ipcRenderer.invoke('avatar:motion-lab:finish', id, outcome),
   setWalkVelocity: (direction, speed) => ipcRenderer.send('avatar:walk-velocity', direction, speed),
   onWalkStopped: (callback) => ipcRenderer.on('avatar:walk-stopped', () => callback()),
   onMotionWarpEnabled: (callback) => ipcRenderer.on('avatar:motion-warp-enabled', (_event, enabled) => callback(enabled)),
