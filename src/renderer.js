@@ -748,12 +748,8 @@ async function startWalking(direction) {
 }
 
 function stopWalkingAndRestore() {
-  if (!walkingMotion) {
-    // A walk may still be waiting on a transfer; invalidate that request.
-    ++motionRequestId;
-    window.aronaDesktop.setWalkVelocity(0, 0);
-    return;
-  }
+  // Also invalidate a walk that is still being prepared or transferred.
+  // The queued idle restore wins over a pending start in either case.
   stopWalkingWithoutRestore();
   const requestId = ++motionRequestId;
   void returnToIdle(requestId, '歩行停止: 待機モーションに戻りました')
