@@ -60,6 +60,22 @@ test('walk VMD contains only matching bones and is a seamless loop', () => {
   }
 });
 
+test('walking chest and hips face the direction of travel while head stays slightly open', () => {
+  const yawDegrees = q => 2 * Math.atan2(q[1], q[3]) * 180 / Math.PI;
+  for (const direction of [-1, 1]) {
+    const { buffer } = buildWalkingVmd({ boneNames: bones, modelHeight: 15, direction });
+    const samples = extractVmd(buffer);
+    const atStart = name => samples.find(sample => sample.name === name && sample.frame === 0);
+    const chestYaw = yawDegrees(atStart('上半身').quat);
+    const hipYaw = yawDegrees(atStart('下半身').quat);
+    const neckYaw = yawDegrees(atStart('首').quat);
+    assert.ok(Math.abs(chestYaw + direction * 78) < 0.2, 'chest should nearly face sideways');
+    assert.ok(Math.abs(hipYaw + direction * 55) < 0.2, 'hips preserve existing gait orientation');
+    assert.ok(Math.abs(neckYaw - direction * 8) < 0.2, 'head remains slightly turned toward camera');
+    assert.ok(chestYaw * hipYaw > 0, 'torso and hips must face the same travel direction');
+  }
+});
+
 test('planted foot opposes window travel at constant rate', () => {
   const stride=2.4;
   const delta=0.07;
