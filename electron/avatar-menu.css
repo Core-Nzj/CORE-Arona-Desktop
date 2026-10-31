@@ -71,8 +71,8 @@ button:focus-visible { outline: 2px solid #2997ff; outline-offset: 2px; }
   flex: none;
   border: 0;
   border-radius: 0 17px 0 0;
-  background: rgba(117,34,52,.16);
-  color: #d7b9c2;
+  background: transparent;
+  color: #c7c7cb;
   cursor: pointer;
   font-size: 20px;
   font-weight: 400;
