@@ -1132,8 +1132,12 @@ function positionAvatarStage(viewport) {
   avatarStage.style.top = y + 'px';
   avatarStage.style.width = w + 'px';
   avatarStage.style.height = h + 'px';
-  if (resized) engine.resize();
-  regionDirty = true;
+  if (resized) {
+    engine.resize();
+    regionDirty = true;
+  }
+  // Pure position changes are frequent during walking. The alpha mask uses
+  // stage-local coordinates and stays valid until the next animation tick.
 }
 window.aronaDesktop.onStageViewport(positionAvatarStage);
 const stageReady = window.aronaDesktop.currentViewport()
