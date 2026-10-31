@@ -1141,18 +1141,25 @@ async function executeMenuAction(action, value) {
 }
 
 function createWindow() {
-  // The initial pose equals five "zoom in" clicks from the old 2x default.
-  // Cap native bounds to the monitor, retaining excess size as camera zoom.
-  const workArea = screen.getPrimaryDisplay().workArea;
+  // One transparent overlay per active display. Its small inner WebGL stage
+  // retains the old camera framing and zoom, without cutting the visible pixels.
+  const display = screen.getPrimaryDisplay();
+  const workArea = display.workArea;
   const startupZoom = resolveZoomScale(startupScaleForArea(workArea), workArea);
   avatarScale = startupZoom.scale;
   const { width, height } = windowSizeForScale(startupZoom.nativeScale);
+  avatarBounds = clampAvatarPosition({
+    x: workArea.x + Math.round((workArea.width - width) / 2),
+    y: workArea.y + Math.round((workArea.height - height) / 2),
+    width, height
+  }, workArea);
+  avatarDisplayId = display.id;
   mainWindow = new BrowserWindow({
     title: 'CORE Arona Desktop',
-    width,
-    height,
-    minWidth: Math.min(BASE_WIDTH, width),
-    minHeight: Math.min(BASE_HEIGHT, height),
+    x: display.bounds.x,
+    y: display.bounds.y,
+    width: display.bounds.width,
+    height: display.bounds.height,
     transparent: true,
     frame: false,
     backgroundColor: '#00000000',
@@ -1169,14 +1176,19 @@ function createWindow() {
     }
   });
 
+  // The overlay is transparent to every other app by default. Only hovering
+  // a verified alpha hit rectangle re-enables native pointer input.
+  mainWindow.setIgnoreMouseEvents(true, { forward: true });
+  startAvatarHitPolling();
   mainWindow.setMenuBarVisibility(false);
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   mainWindow.webContents.on('will-navigate', event => event.preventDefault());
   mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
   mainWindow.webContents.on('did-finish-load', () => {
     if (!mainWindow || mainWindow.isDestroyed()) return;
-    const area = screen.getDisplayMatching(mainWindow.getBounds()).workArea;
-    const { cameraZoom } = boundsForScale(mainWindow.getBounds(), area, avatarScale);
+    const area = screen.getDisplayMatching(avatarBounds).workArea;
+    const { cameraZoom } = boundsForScale(avatarBounds, area, avatarScale);
+    syncAvatarViewport();
     mainWindow.webContents.send('avatar:camera-zoom', cameraZoom);
   });
   mainWindow.on('close', event => {
@@ -1188,6 +1200,11 @@ function createWindow() {
     }
   });
   mainWindow.on('closed', () => {
+    if (avatarHitTimer) clearInterval(avatarHitTimer);
+    avatarHitTimer = null;
+    avatarBounds = null;
+    avatarHitRects = [];
+    avatarDisplayId = null;
     stopAvatarWalk();
     closeAvatarMenu(true);
     stopAvatarDrag();
@@ -1202,6 +1219,10 @@ app.whenReady().then(async () => {
   await restoreMenuLayout();
   protocol.handle(SCHEME, handleModelAsset);
 
+  ipcMain.handle('avatar:viewport', event => {
+    if (!isOurWindow(event) || !avatarBounds) return null;
+    return stageInDisplay(avatarBounds, screen.getDisplayMatching(avatarBounds).bounds);
+  });
   ipcMain.handle('avatar:current', () => infoForCurrentModel());
   ipcMain.handle('avatar:motion-restore', async event => {
     if (!isOurWindow(event) || !motionIdleId || !motionDirectory) return null;
