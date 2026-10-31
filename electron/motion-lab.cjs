@@ -95,7 +95,8 @@ function galleryHtml(meta, entries) {
     'Deterministic 30fps VMD checkpoints F00–F32 at fixed 4-frame intervals. ' +
     'Front, three-quarter and side cameras. No screen or other app was captured.<br>' +
     'For numeric IK foot positions, supported bones and rendering details, see ' +
-    '<a href="manifest.json">manifest.json</a>. Local private assets; do not commit these images.</p>' +
+    '<a href="manifest.json">manifest.json</a> and <a href="REVIEW_GUIDE.md">REVIEW_GUIDE.md</a>. ' +
+    'Local private assets; do not commit these images.</p>' +
     gallery + '</main></html>';
 }
 
@@ -138,7 +139,7 @@ async function completeMotionLab(session, meta = {}) {
     '- ウィンドウ位置を動かす処理は electron/main.cjs、モーション評価・表示は src/renderer.js です。',
     '- 撮影は状態を復元する設計ですが、実機動作の最終確認は必要です。',
     ''
-  ].join('\\n'), 'utf8');
+  ].join('\n'), 'utf8');
   const rel = path.relative(session.root, session.directory).replaceAll('\\','/');
   await fs.writeFile(path.join(session.root, 'latest.json'),
     JSON.stringify({ folder: rel, gallery: rel + '/index.html', manifest: rel + '/manifest.json' },null,2));
