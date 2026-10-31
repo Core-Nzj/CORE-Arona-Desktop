@@ -1112,7 +1112,35 @@ engine.runRenderLoop(() => {
 });
 window.addEventListener('resize', () => { engine.resize(); regionDirty = true; });
 
-window.aronaDesktop.currentModel()
+// The overlay spans the display, but WebGL renders only inside the avatar
+// stage. Native main owns its absolute position; browser zoom never moves it.
+let receivedStageViewport = false;
+function positionAvatarStage(viewport) {
+  if (!viewport || ![viewport.x, viewport.y, viewport.width, viewport.height]
+    .every(Number.isFinite) || viewport.width < 1 || viewport.height < 1) return;
+  receivedStageViewport = true;
+  const x = Math.round(viewport.x);
+  const y = Math.round(viewport.y);
+  const w = Math.round(viewport.width);
+  const h = Math.round(viewport.height);
+  if (avatarStage.style.left === x + 'px' &&
+      avatarStage.style.top === y + 'px' &&
+      avatarStage.style.width === w + 'px' &&
+      avatarStage.style.height === h + 'px') return;
+  const resized = canvas.clientWidth !== w || canvas.clientHeight !== h;
+  avatarStage.style.left = x + 'px';
+  avatarStage.style.top = y + 'px';
+  avatarStage.style.width = w + 'px';
+  avatarStage.style.height = h + 'px';
+  if (resized) engine.resize();
+  regionDirty = true;
+}
+window.aronaDesktop.onStageViewport(positionAvatarStage);
+const stageReady = window.aronaDesktop.currentViewport()
+  .then(viewport => { if (!receivedStageViewport) positionAvatarStage(viewport); })
+  .catch(error => console.warn('[FRAME overlay] initial viewport unavailable', error));
+
+stageReady.then(() => window.aronaDesktop.currentModel())
   .then(model => {
     if (model) return loadModel(model, { startup: true });
     // Fresh install: show the model chooser instead of looping forever.
