@@ -3,6 +3,7 @@
 const feedback = document.getElementById('feedback');
 const voiceList = document.getElementById('voice-list');
 const emotionList = document.getElementById('emotion-list');
+const motionList = document.getElementById('motion-list');
 let busy = false;
 
 function message(value, error = false) {
@@ -36,6 +37,49 @@ function renderState(state) {
   if (!state || typeof state !== 'object') return;
   document.getElementById('model-name').textContent = state.modelName || '未選択';
   document.getElementById('motion-status').textContent = state.motionStatus || '標準待機モーション';
+  const library = state.motionLibrary || {};
+  const entries = Array.isArray(library.entries) ? library.entries : [];
+  const selected = entries.find(entry => entry.id === library.selectedId);
+  const selectedIdle = entries.find(entry => entry.id === library.idleId);
+  document.getElementById('motion-count').textContent = entries.length + '件';
+  document.getElementById('motion-folder').textContent = library.directory || 'フォルダ未設定';
+  document.getElementById('motion-library-status').textContent = library.message || '';
+  document.getElementById('motion-selected').textContent = '選択中: ' + (selected?.name || 'なし');
+  document.getElementById('motion-idle').textContent = '待機: ' +
+    (selectedIdle?.name || (library.idleId ? '保存されたファイルが見つかりません' : '標準'));
+  document.getElementById('motion-set-idle').disabled = !selected;
+  for (const action of ['motion.next', 'motion.previous']) {
+    document.querySelector('[data-action="' + action + '"]').disabled = !entries.length;
+  }
+  const priorScroll = motionList.scrollTop;
+  const buttons = entries.map(entry => {
+    const active = entry.id === library.selectedId;
+    const item = makeOption(entry.name, entry.id, active, true, 'motion.preview');
+    item.classList.add('motion-option');
+    item.title = entry.group ? entry.group + '/' + entry.name : entry.name;
+    if (entry.group) {
+      const group = document.createElement('small');
+      group.textContent = entry.group;
+      item.appendChild(group);
+    }
+    if (entry.id === library.idleId) {
+      const pin = document.createElement('span');
+      pin.className = 'motion-pin';
+      pin.textContent = '待機';
+      item.appendChild(pin);
+    }
+    return item;
+  });
+  if (!entries.length) {
+    const empty = document.createElement('p');
+    empty.className = 'empty';
+    empty.textContent = 'VMDがありません。フォルダを指定してください。';
+    buttons.push(empty);
+  }
+  motionList.replaceChildren(...buttons);
+  motionList.scrollTop = priorScroll;
+  const activeButton = motionList.querySelector('.motion-option.selected');
+  if (activeButton) activeButton.scrollIntoView({ block: 'nearest' });
   document.getElementById('voice-status').textContent = state.voiceStatus || '未接続';
   document.getElementById('voice-light').classList.toggle('online', !!state.voiceReady);
   const app = state.voisona || {};
@@ -117,7 +161,9 @@ window.addEventListener('blur', endResize);
 
 const keepOpen = new Set([
   'voice.refresh', 'voice.select', 'emotion.select',
-  'voice.autoStart', 'voice.autoHide', 'voice.appHide'
+  'voice.autoStart', 'voice.autoHide', 'voice.appHide',
+  'motion.folder', 'motion.refresh', 'motion.preview', 'motion.next',
+  'motion.previous', 'motion.setIdle', 'motion.stop', 'motion.resetIdle'
 ]);
 async function runAction(action, value) {
   if (busy) return;
