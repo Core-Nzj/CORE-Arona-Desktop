@@ -3,7 +3,7 @@
 - ステータス: **採用（Accepted）**
 - 決定日: 2026-10-31
 - 対象: 研究所専用のFRAME視覚プラグインとChatGPT等の外部受信先を接続する境界
-- 実装状況: **第1・第2工程実装済み**（Broker・ローカル検証用Adapter・許可UIを連携）。ChatGPTへの送信は未実装。
+- 実装状況: **第1・第2工程実装済み、第3工程のChromeローカル受信試作を追加**。ChatGPTへの画像添付・送信は未実装で、実機受信テストも未実施。
 - 関連: [ADR-0002](0002-frame-core-plugin-architecture.md)、[視覚プラグイン試作](../plugins.md)、[Issue #4](https://github.com/Core-Nzj/CORE-Arona-Desktop/issues/4)
 
 ## 決定
@@ -114,3 +114,16 @@
 - `electron/main.cjs`: FRAMEの正規設定パネルIPC経由での撮影が成功したときだけBrokerセッションを作成する。メニュー終了・消去・再撮影・拡張の再読込/許可変更・ウィンドウ一覧の再取得時にセッション権限を取消す。`vision.deliverLocal` は見えている設定パネルの認証済みIPCのみ受け付け、要求ID・宛先・確認フラグ・画像保持状態を照合。成功表示はFRAME内部の検証先が受領した場合だけ。
 - `electron/avatar-menu.html/js/css`: PNGプレビュー下に送信先、対象画像、残秒数、同意チェック、テスト実行、取消を表示。別画像へ切り替えたらチェックは必ず解除。ローカル受領済み・取消・期限切れは再撮影なしで再送できない。
 - テスト実行はネットワーク不使用で、画像の意味理解も行わない。VoiSona、MMD、既存の読み上げ設定は変更しない。Windows実機でのUIと撮影を含む確認は別途必要。
+
+## 第3工程: Chrome受信経路の最小実証（2026-10-31）
+
+- `electron/vision-browser-adapter.cjs`: ローカル専用HTTP (`127.0.0.1:32780`)。利用者が明示的に許可した画像についてのみ、256bit乱数の使い捨てコードを発行し、権限あるChrome拡張の `POST /take` に一度だけPNGを返す。認証は `Authorization: Bearer` で行い、URL・ファイル・ログにトークンを置かない。一般WebページOriginは拒否し、CORS公開しない。
+- `electron/main.cjs`: 第2工程のローカル受信先とは別のBrokerで受け渡しセッションを管理。撮影後にFRAMEの拡張タブで専用チェックを入れて初めて待機を開始し、従来のローカル受領セッションは失効させる。認証コードだけを明示ボタンでクリップボードにコピー（画像自体はコピーしない）。
+- `electron/avatar-menu.html/js/css`: Chrome待機・取り消し・使い捨てコード表示を追加。ブラウザへの切り替え中は、受信待機に限りフォーカスアウトによるパネル自動閉鎖を保留。×・Escで閉じれば取消。60秒でBrokerが失効。
+- `experiments/vision-chrome-receiver/`: 独立した最小Manifest V3拡張。コードを手入力/貼付したときのみFRAMEから画像を取得し、拡張内でプレビューする。自動撮影、ChatGPT画面への添付、自動投稿、ファイル保存は行わない。
+- `tests/vision-browser-adapter.test.cjs`: 使い捨て認証、Origin/Host不一致拒否、取消、期限切れを重点検証する。
+- 既存の通常Chat自動音声読み上げ拡張には手を加えない。今回実証したいのは **FRAME→Chrome拡張のローカル画像受け渡し** まで。Chrome拡張→ChatGPTの会話入力への画像添付/認識は、この実機検証に成功した後に検討する。画像はページング・ブラウザ内部キャッシュ等のOS側ディスク書込まで保証できない。
+
+### 明確な制約
+
+受領成功は「Chrome拡張へのHTTP応答が完了した」という意味で、ChatGPTが画像を受け取ったことではない。許可なくChromeやChatGPTに画像を自動送信しない。プラグインの非公開PowerShellスクリプトはGitHubには追加しない。
