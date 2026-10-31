@@ -116,6 +116,68 @@ function renderState(state) {
   emotionList.replaceChildren(...options.map(([id,label]) =>
     makeOption(label,id,state.emotion?.selected === id,
       state.emotion?.available?.[id] === true,'emotion.select')));
+  const plugins = state.plugins || {};
+  const entriesForPlugins = Array.isArray(plugins.entries) ? plugins.entries : [];
+  const pluginCards = entriesForPlugins.map(plugin => {
+    const card = document.createElement('div');
+    card.className = 'plugin-card';
+    const header = document.createElement('div');
+    header.className = 'plugin-card-heading';
+    const name = document.createElement('strong');
+    name.textContent = plugin.name;
+    const status = document.createElement('span');
+    status.textContent = plugin.enabled ? '許可済み' : '無効';
+    status.className = plugin.enabled ? 'plugin-status-on' : '';
+    header.append(name, status);
+    const rights = document.createElement('p');
+    rights.className = 'hint';
+    rights.textContent = '権限: ウィンドウ名・プロセスIDの取得';
+    const controls = document.createElement('div');
+    controls.className = 'motion-toolbar';
+    const toggle = document.createElement('button');
+    toggle.type = 'button';
+    toggle.className = 'row';
+    toggle.dataset.action = 'plugin.toggle';
+    toggle.dataset.value = plugin.id;
+    toggle.textContent = plugin.enabled ? '無効化する' : '利用を許可する';
+    const list = document.createElement('button');
+    list.type = 'button';
+    list.className = 'row' + (plugin.enabled ? ' primary' : '');
+    list.dataset.action = 'plugin.listWindows';
+    list.dataset.value = plugin.id;
+    list.textContent = '窓一覧を取得';
+    list.disabled = !plugin.enabled || plugins.supported === false;
+    controls.append(toggle, list);
+    card.append(header, rights, controls);
+    return card;
+  });
+  if (!entriesForPlugins.length) {
+    const empty = document.createElement('p');
+    empty.className = 'empty';
+    empty.textContent = 'プラグインがありません。フォルダへ配置して再読み込みしてください。';
+    pluginCards.push(empty);
+  }
+  document.getElementById('plugin-count').textContent = entriesForPlugins.length + '件';
+  document.getElementById('plugin-status').textContent = plugins.message || '';
+  document.getElementById('plugin-list').replaceChildren(...pluginCards);
+  const windows = Array.isArray(plugins.windows) ? plugins.windows : [];
+  const windowItems = windows.map(item => {
+    const row = document.createElement('div');
+    row.className = 'plugin-window-item';
+    const title = document.createElement('span');
+    title.textContent = item.title;
+    const pid = document.createElement('small');
+    pid.textContent = 'PID ' + item.pid;
+    row.append(title, pid);
+    return row;
+  });
+  if (!windows.length) {
+    const empty = document.createElement('p');
+    empty.className = 'empty';
+    empty.textContent = 'まだ取得していません（または表示中のウィンドウがありません）。';
+    windowItems.push(empty);
+  }
+  document.getElementById('plugin-windows').replaceChildren(...windowItems);
 }
 // The window is transparent and frameless: manually capture edge drags.
 let resizing = null;
@@ -163,7 +225,8 @@ const keepOpen = new Set([
   'voice.refresh', 'voice.select', 'emotion.select',
   'voice.autoStart', 'voice.autoHide', 'voice.appHide',
   'motion.folder', 'motion.refresh', 'motion.preview', 'motion.next',
-  'motion.previous', 'motion.setIdle', 'motion.stop', 'motion.resetIdle'
+  'motion.previous', 'motion.setIdle', 'motion.stop', 'motion.resetIdle',
+  'plugin.folder', 'plugin.refresh', 'plugin.toggle', 'plugin.listWindows'
 ]);
 async function runAction(action, value) {
   if (busy) return;
