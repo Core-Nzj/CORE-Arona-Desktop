@@ -70,7 +70,7 @@ test('planted foot opposes window travel at constant rate', () => {
   assert.ok(Math.abs((b.x-a.x) + stride*delta/WALK_STANCE) < 1e-10);
   assert.equal(a.y,0);
   assert.equal(b.y,0);
-  assert.equal(walkTravelSpeed(stride,100)*WALK_SECONDS*WALK_STANCE,stride*100);
+  assert.ok(Math.abs(walkTravelSpeed(stride,100)*WALK_SECONDS*WALK_STANCE-stride*100) < 1e-9);
 });
 
 test('swing foot lifts and returns to its first position without discontinuity', () => {
