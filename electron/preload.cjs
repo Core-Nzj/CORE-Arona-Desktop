@@ -18,6 +18,7 @@ contextBridge.exposeInMainWorld('aronaDesktop', Object.freeze({
   reportVoicePlayback: (text) => ipcRenderer.send('avatar:voice-playback-status', text),
   reportEmotionState: (state) => ipcRenderer.send('avatar:emotions-state', state),
   onEmotionChange: (callback) => ipcRenderer.on('avatar:emotion-change', (_event, id) => callback(id)),
+  onMotionCommand: (callback) => ipcRenderer.on('avatar:motion-command', (_event, command) => callback(command)),
   startDrag: () => ipcRenderer.send('avatar:drag-start'),
   stopDrag: () => ipcRenderer.send('avatar:drag-stop'),
   setAvatarRegion: (rect) => ipcRenderer.send('avatar:set-region', rect),
