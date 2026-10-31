@@ -47,6 +47,9 @@ const engine = new Engine(canvas, true, {
   preserveDrawingBuffer: true,
   premultipliedAlpha: false
 });
+// Native movement timers use the same selected FPS cap, while mouse and
+// silhouette hit sampling remain independent. Babylon advances MMD on render.
+engine.maxFPS = 60;
 const scene = new Scene(engine);
 scene.clearColor = new Color4(0, 0, 0, 0);
 scene.ambientColor = new Color3(0.5, 0.5, 0.5);
@@ -807,6 +810,7 @@ async function loadModel(model, { startup = false } = {}) {
   const seq = ++loadSequence;
   chooseButton.disabled = true;
   motionWarpEnabled = model.motionWarpEnabled !== false;
+  if ([30, 60, 120].includes(model.renderFrameRate)) engine.maxFPS = model.renderFrameRate;
   motionTransitionMode = ['auto', 'blend', 'warp'].includes(model.motionTransitionMode)
     ? model.motionTransitionMode : 'auto';
   showStatus('読み込み中: ' + model.name);
@@ -1052,6 +1056,9 @@ window.aronaDesktop.onMotionWarpEnabled(enabled => {
 });
 window.aronaDesktop.onMotionTransitionMode(mode => {
   if (['auto', 'blend', 'warp'].includes(mode)) motionTransitionMode = mode;
+});
+window.aronaDesktop.onFrameRateChange(fps => {
+  if ([30, 60, 120].includes(fps)) engine.maxFPS = fps;
 });
 window.aronaDesktop.onVoiceTest(() => speakLatest('先生、こんにちは！ コア・アロナ・デスクトップから、お話ししています。'));
 window.aronaDesktop.onVoiceText(text => { void speakLatest(text); });
