@@ -6,7 +6,7 @@ const os = require('node:os');
 const path = require('node:path');
 const {
   motionLabRoot, beginMotionLab, writeMotionLabImage, completeMotionLab,
-  galleryHtml, IMAGE_NAME
+  galleryHtml, IMAGE_NAME, pruneMotionLabRuns, MOTION_LAB_KEEP_RUNS
 } = require('../electron/motion-lab.cjs');
 
 const tinyPng = 'data:image/png;base64,' +
@@ -107,4 +107,94 @@ test('save accepts only bounded PNGs and persists local JSON/gallery/latest file
   assert.ok((await fs.readFile(path.join(root,'latest.html'),'utf8')).includes('index.html'));
   const latest = JSON.parse(await fs.readFile(path.join(root,'latest.json'),'utf8'));
   assert.ok(latest.gallery.startsWith('runs/'));
+});
+
+
+async function fakeCompletedRun(root, runName, { extraFile = false, complete = true } = {}) {
+  const dir = path.join(root, 'runs', runName);
+  await fs.mkdir(dir, { recursive: true });
+  const images = [];
+  for (const dirName of ['left', 'right']) {
+    for (const angle of ['front', 'three-quarter', 'side']) {
+      images.push('sheet-' + dirName + '-' + angle + '.png');
+      for (const frame of [0, 4, 8, 12, 16, 20, 24, 28, 32]) {
+        images.push('walk-' + dirName + '-' + angle + '-f' +
+          String(frame).padStart(2, '0') + '.png');
+      }
+    }
+  }
+  const files = images.map(filename => ({ filename }));
+  for (const filename of images) await fs.writeFile(path.join(dir, filename), 'test');
+  await fs.writeFile(path.join(dir, 'manifest.json'),
+    JSON.stringify({ version: 1, motion: 'generated-walk', files }));
+  await fs.writeFile(path.join(dir, 'REVIEW_GUIDE.md'), 'review');
+  if (complete) await fs.writeFile(path.join(dir, 'index.html'), 'gallery');
+  if (extraFile) await fs.writeFile(path.join(dir, 'personal-notes.txt'), 'KEEP');
+  return dir;
+}
+
+test('retention keeps three newest complete reviews and does not remove unfinished or custom folders', async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'frame-motion-lab-retention-'));
+  t.after(async () => fs.rm(root, { recursive: true, force: true }));
+  assert.equal(MOTION_LAB_KEEP_RUNS, 3);
+  const names = [
+    '2026-10-31T06-00-00-000Z-aaaaaaaa',
+    '2026-10-31T06-01-00-000Z-bbbbbbbb',
+    '2026-10-31T06-02-00-000Z-cccccccc',
+    '2026-10-31T06-03-00-000Z-dddddddd',
+    '2026-10-31T06-04-00-000Z-eeeeeeee'
+  ];
+  for (const name of names) await fakeCompletedRun(root, name);
+  const unfinished = await fakeCompletedRun(root,
+    '2026-10-31T05-59-00-000Z-ffffffff', { complete: false });
+  const withNotes = await fakeCompletedRun(root,
+    '2026-10-31T05-58-00-000Z-99999999', { extraFile: true });
+  const unrelated = await fakeCompletedRun(root, 'my-saved-reference');
+  await fs.writeFile(path.join(root, 'latest.json'), JSON.stringify({
+    folder: 'runs/' + names[4]
+  }));
+  const gone = await pruneMotionLabRuns(root);
+  assert.deepEqual(gone, [names[1], names[0]]);
+  for (const name of names.slice(2)) await fs.access(path.join(root, 'runs', name));
+  for (const name of names.slice(0, 2)) {
+    await assert.rejects(fs.access(path.join(root, 'runs', name)), { code: 'ENOENT' });
+  }
+  await fs.access(unfinished);
+  await fs.access(path.join(withNotes, 'personal-notes.txt'));
+  await fs.access(unrelated);
+  assert.deepEqual(await pruneMotionLabRuns(root), []);
+});
+
+test('retention never removes latest or explicitly protected captures', async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'frame-motion-lab-guard-'));
+  t.after(async () => fs.rm(root, { recursive: true, force: true }));
+  const names = Array.from({ length: 4 }, (_, i) =>
+    '2026-10-31T06-0' + i + '-00-000Z-' + String(i).repeat(8));
+  for (const name of names) await fakeCompletedRun(root, name);
+  await fs.writeFile(path.join(root, 'latest.json'), JSON.stringify({
+    folder: 'runs/' + names[0]
+  }));
+  const gone = await pruneMotionLabRuns(root, {
+    protectedRun: path.join(root, 'runs', names[0])
+  });
+  assert.deepEqual(gone, []);
+  for (const name of names) await fs.access(path.join(root, 'runs', name));
+  await assert.rejects(pruneMotionLabRuns(root, { keep: 0 }));
+});
+
+test('retention skips symlinked folders rather than following them', async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'frame-motion-lab-links-'));
+  t.after(async () => fs.rm(root, { recursive: true, force: true }));
+  const outside = await fs.mkdtemp(path.join(os.tmpdir(), 'frame-motion-lab-outside-'));
+  t.after(async () => fs.rm(outside, { recursive: true, force: true }));
+  await fs.mkdir(path.join(root, 'runs'));
+  const link = path.join(root, 'runs', '2026-10-31T01-00-00-000Z-abcdef12');
+  try { await fs.symlink(outside, link, 'dir'); }
+  catch (error) {
+    if (error.code === 'EPERM' || error.code === 'EACCES') return;
+    throw error;
+  }
+  assert.deepEqual(await pruneMotionLabRuns(root), []);
+  await fs.access(outside);
+  assert.ok((await fs.lstat(link)).isSymbolicLink());
 });
