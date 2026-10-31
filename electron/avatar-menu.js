@@ -33,6 +33,16 @@ document.getElementById('text-size-reset').addEventListener('click', resetTextSi
 document.getElementById('text-size-recover').addEventListener('click', resetTextSize);
 
 let busy = false;
+let selectedWindowId = null;
+let selectedWindowPluginId = null;
+let captureBusy = false;
+let lastCaptureRequest = null;
+let lastPluginError = '';
+let currentState = null;
+let shareConsentRequestId = null;
+let shareConsentChecked = false;
+let browserConsentForRequestId = null;
+let browserConsentChecked = false;
 
 function message(value, error = false) {
   feedback.textContent = value;
@@ -129,6 +139,7 @@ function makeOption(label, id, selected, enabled, action) {
 }
 function renderState(state) {
   if (!state || typeof state !== 'object') return;
+  currentState = state;
   applyTextSize(state.textSize);
   document.getElementById('model-name').textContent = state.modelName || '未選択';
   document.getElementById('motion-status').textContent = state.motionStatus || '標準待機モーション';
@@ -229,6 +240,145 @@ function renderState(state) {
   emotionList.replaceChildren(...options.map(([id,label]) =>
     makeOption(label,id,state.emotion?.selected === id,
       state.emotion?.available?.[id] === true,'emotion.select')));
+  const plugins = state.plugins || {};
+  const entriesForPlugins = Array.isArray(plugins.entries) ? plugins.entries : [];
+  const pluginCards = entriesForPlugins.map(plugin => {
+    const card = document.createElement('div');
+    card.className = 'plugin-card';
+    const header = document.createElement('div');
+    header.className = 'plugin-card-heading';
+    const name = document.createElement('strong');
+    name.textContent = plugin.name;
+    const status = document.createElement('span');
+    status.textContent = plugin.enabled ? '許可済み' : '無効';
+    status.className = plugin.enabled ? 'plugin-status-on' : '';
+    header.append(name, status);
+    const rights = document.createElement('p');
+    rights.className = 'hint';
+    rights.textContent = '権限: ウィンドウ名・PID' +
+      (plugin.captureEnabled ? '・選択ウィンドウの撮影' : 'の取得');
+    const controls = document.createElement('div');
+    controls.className = 'motion-toolbar';
+    const toggle = document.createElement('button');
+    toggle.type = 'button';
+    toggle.className = 'row';
+    toggle.dataset.action = 'plugin.toggle';
+    toggle.dataset.value = plugin.id;
+    toggle.textContent = plugin.enabled ? '無効化する' : '利用を許可する';
+    const list = document.createElement('button');
+    list.type = 'button';
+    list.className = 'row' + (plugin.enabled ? ' primary' : '');
+    list.dataset.action = 'plugin.listWindows';
+    list.dataset.value = plugin.id;
+    list.dataset.captureEnabled = String(plugin.captureEnabled);
+    list.textContent = '窓一覧を取得';
+    list.disabled = !plugin.enabled || plugins.supported === false;
+    controls.append(toggle, list);
+    card.append(header, rights, controls);
+    return card;
+  });
+  if (!entriesForPlugins.length) {
+    const empty = document.createElement('p');
+    empty.className = 'empty';
+    empty.textContent = 'プラグインがありません。フォルダへ配置して再読み込みしてください。';
+    pluginCards.push(empty);
+  }
+  document.getElementById('plugin-count').textContent = entriesForPlugins.length + '件';
+  document.getElementById('plugin-status').textContent = plugins.message || '';
+  const pluginList = document.getElementById('plugin-list');
+  const oldPluginScroll = pluginList.scrollTop;
+  pluginList.replaceChildren(...pluginCards);
+  pluginList.scrollTop = oldPluginScroll;
+  const windows = Array.isArray(plugins.windows) ? plugins.windows : [];
+  const currentPluginId = plugins.activePluginId;
+  if (!windows.some(item => item.id === selectedWindowId) ||
+      selectedWindowPluginId !== currentPluginId) {
+    selectedWindowId = null;
+    selectedWindowPluginId = null;
+  }
+  const windowItems = windows.map(item => {
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.className = 'plugin-window-item' +
+      (item.id === selectedWindowId ? ' selected' : '');
+    row.dataset.windowId = item.id;
+    row.dataset.pluginId = currentPluginId || '';
+    row.setAttribute('aria-pressed', String(item.id === selectedWindowId));
+    const title = document.createElement('span');
+    title.textContent = item.title;
+    const pid = document.createElement('small');
+    pid.textContent = 'PID ' + item.pid;
+    row.append(title, pid);
+    return row;
+  });
+  if (!windows.length) {
+    const empty = document.createElement('p');
+    empty.className = 'empty';
+    empty.textContent = 'まだ取得していません（または表示中のウィンドウがありません）。';
+    windowItems.push(empty);
+  }
+  const windowList = document.getElementById('plugin-windows');
+  const oldWindowScroll = windowList.scrollTop;
+  windowList.replaceChildren(...windowItems);
+  windowList.scrollTop = oldWindowScroll;
+
+  const activePlugin = entriesForPlugins.find(item =>
+    item.id === currentPluginId && item.enabled && item.captureEnabled);
+  const captureButton = document.getElementById('plugin-capture');
+  captureButton.disabled = captureBusy || !selectedWindowId || !activePlugin;
+  captureButton.textContent = captureBusy ? '撮影中…' : '選択した窓を撮影';
+  if (!captureButton.disabled) {
+    captureButton.dataset.value = JSON.stringify({
+      pluginId: currentPluginId, windowId: selectedWindowId
+    });
+  } else {
+    delete captureButton.dataset.value;
+  }
+
+  // A re-capture is only valid while the originally listed window/PID remains.
+  if (lastCaptureRequest && (!activePlugin ||
+      lastCaptureRequest.pluginId !== currentPluginId ||
+      !windows.some(item =>
+        item.id === lastCaptureRequest.windowId && item.pid === lastCaptureRequest.pid))) {
+    lastCaptureRequest = null;
+  }
+  const recaptureButton = document.getElementById('plugin-recapture');
+  recaptureButton.disabled = captureBusy || !lastCaptureRequest;
+  if (lastCaptureRequest) {
+    recaptureButton.dataset.value = JSON.stringify({
+      pluginId: lastCaptureRequest.pluginId,
+      windowId: lastCaptureRequest.windowId
+    });
+  } else {
+    delete recaptureButton.dataset.value;
+  }
+
+  const errorBox = document.getElementById('plugin-error');
+  errorBox.hidden = !lastPluginError;
+  errorBox.textContent = lastPluginError;
+
+  const preview = plugins.capture || null;
+  updateVisionSharePanel(preview, state.visionShare);
+  updateVisionBrowserPanel(preview, state.visionShare, state.browserShare);
+  const previewElement = document.getElementById('plugin-preview');
+  previewElement.hidden = !preview;
+  document.getElementById('plugin-clear').disabled = captureBusy || !preview;
+  document.getElementById('plugin-preview-open').disabled = !preview;
+  const previewImage = document.getElementById('plugin-preview-image');
+  if (preview && typeof preview.dataUrl === 'string' &&
+      preview.dataUrl.startsWith('data:image/png;base64,')) {
+    previewImage.src = preview.dataUrl;
+    document.getElementById('plugin-preview-title').textContent = preview.title || '';
+    document.getElementById('plugin-preview-size').textContent =
+      preview.width + ' × ' + preview.height;
+  } else {
+    previewImage.removeAttribute('src');
+    document.getElementById('plugin-preview-title').textContent = '';
+    document.getElementById('plugin-preview-size').textContent = '';
+    if (!document.getElementById('plugin-lightbox').hidden) {
+      closePreviewLightbox(false);
+    }
+  }
 }
 // The window is transparent and frameless: manually capture edge drags.
 let resizing = null;
@@ -272,42 +422,267 @@ for (const zone of document.querySelectorAll('[data-resize-edge]')) {
 }
 window.addEventListener('blur', () => { endResize(); saveViewState(); });
 
+function openPreviewLightbox() {
+  const preview = currentState?.plugins?.capture;
+  if (!preview?.dataUrl?.startsWith('data:image/png;base64,')) return;
+  const layer = document.getElementById('plugin-lightbox');
+  document.getElementById('plugin-lightbox-title').textContent = preview.title || 'LOCAL PREVIEW';
+  document.getElementById('plugin-lightbox-image').src = preview.dataUrl;
+  layer.hidden = false;
+  document.getElementById('plugin-lightbox-close').focus();
+}
+
+function closePreviewLightbox(restoreFocus = true) {
+  const layer = document.getElementById('plugin-lightbox');
+  layer.hidden = true;
+  document.getElementById('plugin-lightbox-image').removeAttribute('src');
+  if (restoreFocus && !document.getElementById('plugin-preview-open').disabled) {
+    document.getElementById('plugin-preview-open').focus();
+  }
+}
+
+
+function updateVisionSharePanel(preview, share) {
+  const card = document.getElementById('vision-share');
+  card.hidden = !preview;
+  const session = share?.session || null;
+  if (shareConsentRequestId !== (session?.requestId ?? null)) {
+    shareConsentRequestId = session?.requestId ?? null;
+    shareConsentChecked = false; // A new capture never inherits approval.
+  }
+  const expiresIn = Number(session?.expiresAt) - Date.now();
+  const canSend = !!preview && session?.status === 'captured' && expiresIn > 0;
+  const checkbox = document.getElementById('vision-share-consent');
+  if (!canSend) shareConsentChecked = false;
+  checkbox.disabled = !canSend || busy;
+  checkbox.checked = canSend && shareConsentChecked;
+
+  const status = document.getElementById('vision-share-status');
+  const labels = {
+    captured: '確認待ち', approved: '許可済み', delivering: '受領確認中',
+    delivered: 'ローカル受領済み', revoked: '取り消し済み',
+    expired: '期限切れ', failed: '受け渡し失敗'
+  };
+  status.textContent = session?.status === 'captured' && expiresIn <= 0
+    ? '期限切れ' : (labels[session?.status] || '未準備');
+  document.getElementById('vision-share-target').textContent =
+    preview ? (preview.title || '選択されたウィンドウ') +
+      ' / ' + preview.width + ' × ' + preview.height : '';
+  document.getElementById('vision-share-destination').textContent =
+    share?.destination?.label || '受信先なし';
+  const ttl = document.getElementById('vision-share-expiry');
+  ttl.textContent = canSend
+    ? '有効期限まで残り ' + Math.ceil(expiresIn / 1000) + ' 秒（再撮影すると更新）'
+    : (session?.status === 'delivered'
+      ? '1回の受け渡しが完了しました。次回は再撮影が必要です。'
+      : 'この画像の受け渡しには再撮影が必要です。');
+  const send = document.getElementById('vision-share-send');
+  send.disabled = !canSend || !shareConsentChecked || busy;
+  if (!send.disabled) {
+    send.dataset.value = JSON.stringify({
+      requestId: session.requestId,
+      destinationId: share.destination.destinationId,
+      userConfirmed: true
+    });
+  } else {
+    delete send.dataset.value;
+  }
+  document.getElementById('vision-share-revoke').disabled =
+    busy || !session || !['captured', 'approved', 'delivering'].includes(session.status) ||
+    expiresIn <= 0;
+}
+document.getElementById('vision-share-consent').addEventListener('change', event => {
+  if (event.target.disabled) return;
+  shareConsentChecked = event.target.checked;
+  updateVisionSharePanel(currentState?.plugins?.capture, currentState?.visionShare);
+});
+// Update the countdown without re-rendering window lists or captured PNGs.
+setInterval(() => {
+  if (!currentState || panelWarp.phase === 'closed' || panelWarp.phase === 'closing') return;
+  updateVisionSharePanel(currentState.plugins?.capture, currentState.visionShare);
+  updateVisionBrowserPanel(currentState.plugins?.capture, currentState.visionShare,
+    currentState.browserShare);
+}, 1000);
+
+function updateVisionBrowserPanel(preview, localShare, browserShare) {
+  const root = document.getElementById('vision-browser');
+  root.hidden = !preview;
+  const local = localShare?.session;
+  const browser = browserShare?.session;
+  const receipt = browserShare?.receipt;
+  if (browserConsentForRequestId !== (local?.requestId || null)) {
+    browserConsentForRequestId = local?.requestId || null;
+    browserConsentChecked = false;
+  }
+  const awaiting = browser?.status === 'delivering' && !!receipt;
+  const ready = !!preview && local?.status === 'captured' &&
+    local.expiresAt > Date.now() && !awaiting;
+  const checkbox = document.getElementById('vision-browser-consent');
+  if (!ready) browserConsentChecked = false;
+  checkbox.disabled = !ready || busy;
+  checkbox.checked = ready && browserConsentChecked;
+  const start = document.getElementById('vision-browser-start');
+  start.disabled = !ready || !browserConsentChecked || busy;
+  start.dataset.value = 'confirm-browser-handoff';
+  const cancel = document.getElementById('vision-browser-cancel');
+  cancel.disabled = !awaiting || busy;
+  const codeArea = document.getElementById('vision-browser-code-area');
+  codeArea.hidden = !awaiting;
+  document.getElementById('vision-browser-code').value = awaiting ? receipt.token : '';
+  document.getElementById('vision-browser-copy').disabled = !awaiting || busy;
+  let label = '未準備';
+  if (awaiting) label = 'Chrome受信待機中';
+  else if (browser?.status === 'delivered') label = 'Chrome受領済み';
+  else if (browser?.status === 'expired') label = '期限切れ';
+  else if (browser?.status === 'revoked') label = '取消済み';
+  else if (browser?.status === 'failed') label = '受信失敗';
+  else if (ready) label = '撮影済み・確認待ち';
+  document.getElementById('vision-browser-status').textContent = label;
+}
+document.getElementById('vision-browser-consent').addEventListener('change', event => {
+  if (event.target.disabled) return;
+  browserConsentChecked = event.target.checked;
+  updateVisionBrowserPanel(currentState?.plugins?.capture,
+    currentState?.visionShare, currentState?.browserShare);
+});
+
+function discardCapture() {
+  lastCaptureRequest = null;
+  lastPluginError = '';
+  shareConsentRequestId = null;
+  shareConsentChecked = false;
+  browserConsentForRequestId = null;
+  browserConsentChecked = false;
+  closePreviewLightbox(false);
+  if (currentState) {
+    currentState = { ...currentState, plugins: { ...currentState.plugins, capture: null } };
+    renderState(currentState);
+  }
+}
+
 const keepOpen = new Set([
   'voice.refresh', 'voice.select', 'emotion.select',
   'voice.autoStart', 'voice.autoHide', 'voice.appHide',
   'motion.folder', 'motion.refresh', 'motion.preview', 'motion.next',
   'motion.previous', 'motion.setIdle', 'motion.stop', 'motion.resetIdle', 'motion.warpToggle',
-  'motion.transition'
+  'motion.transition',
+  'plugin.folder', 'plugin.refresh', 'plugin.toggle', 'plugin.listWindows',
+  'plugin.captureWindow', 'plugin.clearCapture', 'vision.deliverLocal', 'vision.revoke',
+  'vision.beginBrowser', 'vision.copyBrowserToken', 'vision.cancelBrowser'
 ]);
+
 async function runAction(action, value) {
-  if (busy) return;
+  if (busy || panelWarp.phase === 'closed' || panelWarp.phase === 'closing') return;
+  const generation = menuOpenGeneration;
+  const isCurrent = () => generation === menuOpenGeneration &&
+    panelWarp.phase !== 'closed' && panelWarp.phase !== 'closing';
+  if (action === 'plugin.previewOpen') { openPreviewLightbox(); return; }
+  if (action === 'plugin.previewClose') { closePreviewLightbox(); return; }
+
+  if (action === 'plugin.recapture') {
+    if (!lastCaptureRequest) return;
+    action = 'plugin.captureWindow';
+    value = JSON.stringify({
+      pluginId: lastCaptureRequest.pluginId,
+      windowId: lastCaptureRequest.windowId
+    });
+  }
+  const isPlugin = action.startsWith('plugin.') || action.startsWith('vision.');
   busy = true;
-  message('処理しています…');
+  if (isPlugin) lastPluginError = '';
+  if (action === 'plugin.captureWindow') {
+    let request;
+    try { request = JSON.parse(value); } catch { request = null; }
+    const target = currentState?.plugins?.windows?.find(item =>
+      item.id === request?.windowId);
+    if (!target || request?.pluginId !== currentState?.plugins?.activePluginId) {
+      busy = false;
+      lastPluginError = '撮影対象が見つかりません。一覧を取り直してください。';
+      if (currentState) renderState(currentState);
+      message(lastPluginError, true);
+      return;
+    }
+    lastCaptureRequest = {
+      pluginId: request.pluginId, windowId: target.id, pid: target.pid
+    };
+    captureBusy = true;
+    message('撮影中…');
+  } else {
+    message('処理しています…');
+  }
+  if (isPlugin && currentState) renderState(currentState);
   try {
     const result = await window.aronaMenu.action(action, value);
+    if (!isCurrent()) return;
     if (!result?.ok) {
-      message(result?.message || '操作に失敗しました', true);
+      if (isPlugin) {
+        lastPluginError = String(result?.message || '操作に失敗しました');
+        // A capture error clears the image in the host; fetch fresh state.
+        try {
+          const state = await window.aronaMenu.state();
+          if (!isCurrent()) return;
+          renderState(state);
+        }
+        catch (stateError) {
+          if (!isCurrent()) return;
+          lastPluginError += '\n状態更新に失敗: ' + String(stateError?.message ?? stateError);
+        }
+        message('操作に失敗しました。拡張タブに詳細を表示しています。', true);
+      } else {
+        message(result?.message || '操作に失敗しました', true);
+      }
     } else {
+      if (action === 'plugin.clearCapture') {
+        lastCaptureRequest = null;
+        closePreviewLightbox(false);
+      }
       if (result.state) renderState(result.state);
       message(result.message || '完了しました');
       if (!keepOpen.has(action)) { saveViewState(); window.aronaMenu.close(); }
     }
   } catch (error) {
-    message('操作できませんでした: ' + String(error?.message ?? error), true);
+    if (!isCurrent()) return;
+    if (isPlugin) lastPluginError = String(error?.message ?? error);
+    message('操作できませんでした: ' + String(error?.message ?? error).slice(0, 200), true);
+    if (isPlugin) {
+      try {
+        const state = await window.aronaMenu.state();
+        if (isCurrent()) renderState(state);
+      } catch { /* Keep original error. */ }
+    }
   } finally {
     busy = false;
+    captureBusy = false;
+    // Re-enable controls even if the panel reopened while this action ran.
+    // Only redraw the latest snapshot; the old result was discarded above.
+    if (currentState && panelWarp.phase !== 'closed' && panelWarp.phase !== 'closing') {
+      renderState(currentState);
+    }
   }
 }
 
 document.addEventListener('click', event => {
   const tab = event.target.closest('[data-tab]');
   if (tab) { tabTo(tab.dataset.tab); return; }
+  const windowRow = event.target.closest('[data-window-id]');
+  if (windowRow) {
+    if (busy || !currentState) return;
+    selectedWindowId = windowRow.dataset.windowId;
+    selectedWindowPluginId = windowRow.dataset.pluginId;
+    renderState(currentState);
+    return;
+  }
   const target = event.target.closest('[data-action]');
   if (target && !target.disabled) void runAction(target.dataset.action, target.dataset.value);
 });
 document.getElementById('close').addEventListener('click', () => { saveViewState(); window.aronaMenu.close(); });
 document.addEventListener('keydown', event => {
   if (event.key === 'Escape') {
+    if (!document.getElementById('plugin-lightbox').hidden) {
+      event.preventDefault();
+      closePreviewLightbox();
+      return;
+    }
     if (resizing) endResize();
     saveViewState();
     window.aronaMenu.close();
@@ -341,5 +716,6 @@ window.aronaMenu.onStateUpdate(state => {
 window.aronaMenu.onCloseAnimation(generation => {
   if (menuOpenGeneration !== generation) return;
   saveViewState();
+  discardCapture();
   panelWarp.close(() => window.aronaMenu.closeComplete(generation));
 });

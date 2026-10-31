@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "FRAME Vision Receiver (Research)",
+  "version": "0.1.0",
+  "description": "研究所用FRAME画像の一回限りのローカル受信テスト。ChatGPTへは送信しません。",
+  "action": {
+    "default_title": "FRAME画像を受信",
+    "default_popup": "popup.html"
+  },
+  "host_permissions": [
+    "http://127.0.0.1/*"
+  ]
+}

@@ -10,6 +10,11 @@ const {
   avatarMovementLimits, unboundedOverlayZoom, scaleAvatarHitRectangles
 } = require('./avatar-overlay.cjs');
 const { scanMotionLibrary, readMotionFile } = require('./motion-library.cjs');
+const { FramePluginHost } = require('./plugin-host.cjs');
+const { VisionSessionBroker } = require('./vision-session-broker.cjs');
+const { VisionLocalAdapter, LOCAL_DESTINATION_ID } = require('./vision-local-adapter.cjs');
+const { VisionBrowserAdapter, DESTINATION_ID: BROWSER_DESTINATION_ID } =
+  require('./vision-browser-adapter.cjs');
 const {
   BASE_WIDTH, BASE_HEIGHT, INITIAL_SCALE, MIN_SCALE, ZOOM_IN_FACTOR,
   clampScale, resolveZoomScale, startupScaleForArea, windowSizeForScale, boundsForScale
@@ -82,7 +87,7 @@ let motionFolderDialogOpen = false;
 let menuLayout = { width: DEFAULT_WIDTH, height: DEFAULT_HEIGHT, zoom: 1 };
 let menuTextSize = DEFAULT_TEXT_SIZE;
 // Session-only navigation state. Closing FRAME clears this automatically.
-const MENU_TABS = ['home', 'motion', 'voice', 'emotion', 'status'];
+const MENU_TABS = ['home', 'motion', 'voice', 'plugins', 'emotion', 'status'];
 const MENU_TAB_SET = new Set(MENU_TABS);
 let menuViewState = {
   tab: 'home',
@@ -122,6 +127,11 @@ let voiceSynthesis = null;
 let voicePlaybackStatus = 'テスト再生はまだ実行されていません';
 let speechBridge = null;
 let speechBridgeError = '';
+let pluginHost = null;
+// In-process only; no listeners or network connections are opened.
+const visionBroker = new VisionSessionBroker({ adapter: new VisionLocalAdapter() });
+const visionBrowserAdapter = new VisionBrowserAdapter();
+const visionBrowserBroker = new VisionSessionBroker({ adapter: visionBrowserAdapter });
 
 function isSettingsWindow(event) {
   return settingsWindow && !settingsWindow.isDestroyed() &&
@@ -800,7 +810,17 @@ function menuState() {
       autoHide: voisonaPrefs.autoHide,
       executableSet: !!voisonaPrefs.executable
     },
-    emotion: { selected: emotionState.selected, available: emotionState.available }
+    emotion: { selected: emotionState.selected, available: emotionState.available },
+    plugins: pluginHost?.state() || { entries: [], windows: [], message: 'プラグイン未初期化' },
+    visionShare: {
+      session: visionBroker.getState(),
+      destination: visionBroker.getCapabilities()
+    },
+    browserShare: {
+      session: visionBrowserBroker.getState(),
+      destination: visionBrowserBroker.getCapabilities(),
+      receipt: visionBrowserAdapter.getPending()
+    }
   };
 }
 
@@ -811,6 +831,7 @@ let menuPendingOpen = false;
 let menuClosing = false;
 let menuTransition = 0;
 let menuHideTimer = null;
+let menuCaptureGeneration = 0;
 
 function finishMenuHide(generation) {
   if (generation !== menuTransition || !menuClosing ||
@@ -822,6 +843,10 @@ function finishMenuHide(generation) {
 }
 
 function closeAvatarMenu(force = false) {
+  ++menuCaptureGeneration;
+  visionBroker.revoke();
+  visionBrowserBroker.revoke();
+  pluginHost?.clearCapture();
   finishMenuResize();
   if (!menuWindow || menuWindow.isDestroyed()) return;
   if (force) {
@@ -889,11 +914,16 @@ function createAvatarMenuWindow() {
   });
   popup.on('blur', () => {
     if (menuWindow === popup && popup.isVisible() && !menuResize &&
-        !motionFolderDialogOpen && !menuClosing) closeAvatarMenu();
+        !motionFolderDialogOpen && !menuClosing &&
+        visionBrowserBroker.getState()?.status !== 'delivering') closeAvatarMenu();
   });
   popup.on('closed', () => {
     if (menuResize?.window === popup) menuResize = null;
     if (menuWindow === popup) {
+      ++menuCaptureGeneration;
+      visionBroker.revoke();
+      visionBrowserBroker.revoke();
+      pluginHost?.clearCapture();
       menuWindow = null;
       menuPrepared = false;
       menuClosing = false;
@@ -1052,6 +1082,156 @@ async function executeMenuAction(action, value) {
       await saveModelSelection();
       mainWindow.webContents.send('avatar:motion-command', { type: 'reset-idle' });
       return '標準待機モーションへ戻しました';
+    case 'plugin.folder': {
+      if (!pluginHost) throw new Error('プラグイン基盤は未初期化です');
+      await fs.mkdir(pluginHost.root, { recursive: true });
+      const error = await shell.openPath(pluginHost.root);
+      if (error) throw new Error(error);
+      return 'プラグインフォルダを開きました';
+    }
+    case 'plugin.refresh':
+      if (!pluginHost) throw new Error('プラグイン基盤は未初期化です');
+      visionBroker.revoke();
+      visionBrowserBroker.revoke();
+      await pluginHost.refresh();
+      return pluginHost.message;
+    case 'plugin.toggle': {
+      if (!pluginHost) throw new Error('プラグイン基盤は未初期化です');
+      const item = pluginHost.state().entries.find(entry => entry.id === value);
+      if (!item) throw new Error('指定されたプラグインはありません');
+      visionBroker.revoke();
+      visionBrowserBroker.revoke();
+      await pluginHost.setEnabled(item.id, !item.enabled);
+      return (item.enabled ? '無効化しました: ' : '利用を許可しました: ') + item.name;
+    }
+    case 'plugin.listWindows': {
+      if (!pluginHost) throw new Error('プラグイン基盤は未初期化です');
+      visionBroker.revoke();
+      visionBrowserBroker.revoke();
+      const windows = await pluginHost.listWindows(value);
+      return 'ウィンドウを' + windows.length + '件取得しました（ローカル表示のみ）';
+    }
+    case 'plugin.captureWindow': {
+      if (!pluginHost) throw new Error('プラグイン基盤は未初期化です');
+      let selected;
+      try { selected = JSON.parse(value); } catch { throw new Error('撮影対象が不正です'); }
+      if (!selected || typeof selected.pluginId !== 'string' ||
+          typeof selected.windowId !== 'string') throw new Error('撮影対象が不正です');
+      visionBroker.revoke(); // Every new image requires fresh consent.
+      visionBrowserBroker.revoke();
+      const generation = menuCaptureGeneration;
+      const image = await pluginHost.captureWindow(selected.pluginId, selected.windowId);
+      // A pending capture must not repopulate a closed or reopened panel.
+      if (generation !== menuCaptureGeneration) {
+        pluginHost.clearCapture();
+        throw new Error('設定画面を閉じたため撮影画像を破棄しました');
+      }
+      let decoded;
+      try {
+        // Plugin host has already validated PNG contents and target PID.
+        decoded = Buffer.from(image.dataUrl.slice('data:image/png;base64,'.length), 'base64');
+        const pending = visionBroker.begin({
+          source: 'frame.menu',
+          target: { pluginId: selected.pluginId, windowId: selected.windowId, pid: image.pid },
+          destinationId: LOCAL_DESTINATION_ID
+        });
+        visionBroker.capture(pending.requestId, decoded);
+      } catch (error) {
+        visionBroker.revoke();
+        pluginHost.clearCapture();
+        throw error;
+      } finally {
+        decoded?.fill(0);
+      }
+      return image.title + ' を撮影しました（ローカルのみ、保存なし）';
+    }
+    case 'plugin.clearCapture':
+      visionBroker.revoke();
+      visionBrowserBroker.revoke();
+      pluginHost?.clearCapture();
+      return '撮影画像を消去しました';
+    case 'vision.revoke':
+      visionBroker.revoke();
+      return '画像の共有を取り消しました（プレビューは維持）';
+    case 'vision.deliverLocal': {
+      // Only the authorized menu IPC may reach this handler.
+      if (!menuWindow || menuWindow.isDestroyed() || !menuWindow.isVisible() || menuClosing) {
+        throw new Error('設定画面が開いている間だけ受け渡しできます');
+      }
+      let request;
+      try { request = JSON.parse(value); } catch { throw new Error('送信要求が不正です'); }
+      if (!request || typeof request.requestId !== 'string' ||
+          request.destinationId !== LOCAL_DESTINATION_ID || request.userConfirmed !== true) {
+        throw new Error('画像と送信先を確認し、明示的に許可してください');
+      }
+      const session = visionBroker.getState();
+      if (!session || session.status !== 'captured' ||
+          session.requestId !== request.requestId ||
+          !pluginHost?.state().capture) {
+        throw new Error('画像が存在しないか、すでに受け渡し済みです。再撮影してください');
+      }
+      visionBroker.approve({
+        requestId: request.requestId, destinationId: request.destinationId,
+        userConfirmed: true
+      });
+      await visionBroker.deliver(request.requestId);
+      return 'FRAME内部の検証先が画像を1回受領しました（ChatGPTには未送信）';
+    }
+    case 'vision.beginBrowser': {
+      if (!menuWindow || menuWindow.isDestroyed() || !menuWindow.isVisible() || menuClosing) {
+        throw new Error('設定画面が開いている間だけ受け渡しできます');
+      }
+      if (value !== 'confirm-browser-handoff') {
+        throw new Error('ブラウザ受け渡しには画像と送信先の確認が必要です');
+      }
+      const local = visionBroker.getState();
+      const preview = pluginHost?.state().capture;
+      if (local?.status !== 'captured' || !preview ||
+          Date.now() >= local.expiresAt) {
+        throw new Error('新しい画像を撮影してから受け渡しを許可してください');
+      }
+      if (visionBrowserBroker.getState()?.status === 'delivering') {
+        throw new Error('前のブラウザ受信処理が完了していません');
+      }
+      const bytes = Buffer.from(preview.dataUrl.slice('data:image/png;base64,'.length), 'base64');
+      try {
+        await visionBrowserAdapter.start();
+        const pending = visionBrowserBroker.begin({
+          source: 'frame.menu', target: local.target,
+          destinationId: BROWSER_DESTINATION_ID
+        });
+        visionBrowserBroker.capture(pending.requestId, bytes);
+        visionBrowserBroker.approve({
+          requestId: pending.requestId, destinationId: BROWSER_DESTINATION_ID,
+          userConfirmed: true
+        });
+        visionBroker.revoke();
+        void visionBrowserBroker.deliver(pending.requestId).catch(() => {}).finally(() => {
+          if (menuWindow && !menuWindow.isDestroyed() && !menuClosing) {
+            menuWindow.webContents.send('avatar-menu:state-update', menuState());
+          }
+        });
+        await new Promise(resolve => setImmediate(resolve));
+        if (!visionBrowserAdapter.getPending()) throw new Error('受信待機を開始できませんでした');
+        return 'Chrome拡張の受信待機を開始しました（60秒以内、一回限り）';
+      } catch (error) {
+        visionBrowserBroker.revoke();
+        throw error;
+      } finally {
+        bytes.fill(0);
+      }
+    }
+    case 'vision.copyBrowserToken': {
+      const pending = visionBrowserAdapter.getPending();
+      if (!pending || visionBrowserBroker.getState()?.status !== 'delivering') {
+        throw new Error('有効なChrome受信コードはありません');
+      }
+      clipboard.writeText(pending.token);
+      return '受信コードをコピーしました（画像はコピーされません）';
+    }
+    case 'vision.cancelBrowser':
+      visionBrowserBroker.revoke();
+      return 'Chrome受信待機を取り消しました';
     case 'voice.settings':
       openVoiceSettings();
       return '接続設定を開きました';
@@ -1246,6 +1426,9 @@ app.whenReady().then(async () => {
   await restoreModelSelection();
   await refreshMotionLibrary();
   await restoreMenuLayout();
+  pluginHost = new FramePluginHost({ dataDirectory: app.getPath('userData') });
+  try { await pluginHost.initialize(); }
+  catch (error) { console.warn('[FRAME Plugins] initialization failed:', error?.message); }
   protocol.handle(SCHEME, handleModelAsset);
 
   ipcMain.handle('avatar:viewport', event => {
@@ -1279,7 +1462,9 @@ app.whenReady().then(async () => {
       return { ok: true, message, state: menuState() };
     } catch (error) {
       console.error('[CORE menu] action failed:', action, error);
-      return { ok: false, message: String(error?.message ?? error).slice(0, 240) };
+      const detail = String(error?.message ?? error);
+      return { ok: false, message: detail.slice(0,
+        typeof action === 'string' && action.startsWith('plugin.') ? 4096 : 240) };
     }
   });
   ipcMain.on('avatar-menu:resize-start', (event, edge) => {
@@ -1539,6 +1724,7 @@ app.on('before-quit', event => {
     return;
   }
   closeAvatarMenu(true);
+  void visionBrowserBroker.disconnect().catch(() => {});
   browserCredentialPortal?.close();
   speechBridge?.close();
   proxyManager.stop();
