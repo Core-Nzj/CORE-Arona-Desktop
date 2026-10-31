@@ -44,6 +44,8 @@ test('local gallery escapes untrusted model names and links valid images', () =>
   assert.ok(gallery.includes('<section>'));
   assert.ok(!gallery.includes('undefined'));
   assert.ok(gallery.includes('manifest.json'));
+  assert.ok(gallery.includes('neutral gray'));
+  assert.ok(gallery.includes('ground line'));
 });
 
 test('save accepts only bounded PNGs and persists local JSON/gallery/latest files', async t => {
@@ -62,12 +64,19 @@ test('save accepts only bounded PNGs and persists local JSON/gallery/latest file
   await assert.rejects(writeMotionLabImage(session,'walk-left-front-f00.png',tinyPng));
   await writeMotionLabImage(session,'sheet-left-front.png',tinyPng,{view:'front',direction:-1});
   const dest = await completeMotionLab(session,{
-    modelName:'private-sample.pmx',modelHeight:15,stride:1.2,bones:{leftIK:'左足ＩＫ'}
+    modelName:'private-sample.pmx',modelHeight:15,stride:1.2,
+    captureProfile:{background:'#969AA4', cameraFov:0.7, fixedCameraBeta:Math.PI / 2,
+      groundReference:'projected initial model bounds minimum Y'},
+    bones:{leftIK:'左足ＩＫ'}
   });
   const manifest = JSON.parse(await fs.readFile(path.join(dest,'manifest.json'),'utf8'));
   assert.equal(manifest.files.length,2);
   assert.equal(manifest.files[0].leftFoot.planted,true);
   assert.equal(manifest.modelName,'private-sample.pmx');
+  assert.equal(manifest.captureProfile.background, '#969AA4');
+  assert.equal(manifest.captureProfile.cameraFov, 0.7);
+  assert.ok(manifest.captureProfile.groundReference.includes('initial'));
+  assert.ok((await fs.readFile(path.join(dest,'REVIEW_GUIDE.md'),'utf8')).includes('GROUND REF'));
   assert.ok((await fs.readFile(path.join(dest,'index.html'),'utf8')).includes('sheet-left-front.png'));
   assert.ok((await fs.readFile(path.join(root,'latest.html'),'utf8')).includes('index.html'));
   const latest = JSON.parse(await fs.readFile(path.join(root,'latest.json'),'utf8'));
