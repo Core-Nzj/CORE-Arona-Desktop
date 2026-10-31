@@ -10,6 +10,7 @@
 <main class="shell" aria-label="FRAME 操作パネル">
   <div class="titlebar" aria-label="ウィンドウのタイトルバー">
     <div class="titlebar-name">FRAME</div>
+    <button type="button" id="text-size-recover" class="text-size-recover" aria-label="テキストサイズを100％に戻す">文字100％に戻す</button>
     <button type="button" id="close" class="titlebar-close" aria-label="メニューを閉じる" title="閉じる">×</button>
   </div>
   <header class="heading">
@@ -37,6 +38,16 @@
         <button type="button" class="row" data-action="zoom.in">＋ 拡大</button>
       </div>
       <p class="hint">モデル上のホイールでも拡大・縮小できます。</p>
+      <div class="section-title gap"><span>APPEARANCE</span><small>表示設定</small></div>
+      <div class="text-size-control">
+        <div class="text-size-heading">
+          <label for="text-size">テキストサイズ</label>
+          <output id="text-size-value" for="text-size">100%</output>
+        </div>
+        <input type="range" id="text-size" min="0" max="200" step="5" value="100">
+        <div class="text-size-ends"><span>小さく</span><span>大きく</span></div>
+        <button type="button" class="text-size-reset" id="text-size-reset">100%にリセット</button>
+      </div>
       <div class="section-title gap"><span>MOTION</span><small>ローカルVMD</small></div>
       <div class="stack">
         <button type="button" class="row primary" data-action="motion.play">VMDを選択して1回再生<b>›</b></button>
@@ -59,6 +70,14 @@
         <button type="button" class="row" data-action="motion.previous">‹ 前へ</button>
         <button type="button" class="row" data-action="motion.next">次へ ›</button>
       </div>
+      <div class="section-title gap"><span>TRANSITION</span><small>モーション間の接続</small></div>
+      <div class="motion-transition-mode" role="group" aria-label="モーション切り替え方式">
+        <button type="button" class="transition-choice selected" data-action="motion.transition" data-value="auto" aria-pressed="true">自動</button>
+        <button type="button" class="transition-choice" data-action="motion.transition" data-value="blend" aria-pressed="false">ブレンド優先</button>
+        <button type="button" class="transition-choice" data-action="motion.transition" data-value="warp" aria-pressed="false">デジタル転送</button>
+      </div>
+      <p class="hint">自動：姿勢が近い場合だけ滑らかに接続。難しい組み合わせはデジタル転送します。</p>
+      <button type="button" class="row" id="motion-warp-toggle" data-action="motion.warpToggle" aria-pressed="true">デジタル転送演出 ON</button>
       <p class="motion-current" id="motion-selected">選択中: なし</p>
       <div class="stack">
         <button type="button" class="row primary" data-action="motion.setIdle" id="motion-set-idle">この動きを待機に設定<b>›</b></button>
@@ -66,6 +85,13 @@
         <button type="button" class="row" data-action="motion.resetIdle">標準待機に戻す</button>
       </div>
       <p class="hint" id="motion-idle">待機: 標準</p>
+      <div class="section-title gap"><span>WALK</span><small>生成歩行 / 実験版</small></div>
+      <div class="motion-toolbar">
+        <button type="button" class="row" data-action="motion.walkLeft" id="walk-left">← 左へ歩く</button>
+        <button type="button" class="row" data-action="motion.walkRight" id="walk-right">右へ歩く →</button>
+      </div>
+      <button type="button" class="row" data-action="motion.walkStop" id="walk-stop">歩行を停止</button>
+      <p class="hint">左右の足IKに対応したモデルで使用できます。画面端で自動停止します。</p>
     </section>
     <section class="page" data-page="voice" hidden>
       <div class="section-title"><span>VOICE</span><small>VoiSona Talk</small></div>
@@ -154,6 +180,7 @@
     <img id="plugin-lightbox-image" alt="撮影画像の拡大プレビュー">
   </div>
 </div>
+<canvas id="panel-warp" class="panel-warp" aria-hidden="true"></canvas>
 <div class="resize-zone resize-n" data-resize-edge="n" aria-hidden="true"></div>
 <div class="resize-zone resize-s" data-resize-edge="s" aria-hidden="true"></div>
 <div class="resize-zone resize-e" data-resize-edge="e" aria-hidden="true"></div>
@@ -162,5 +189,6 @@
 <div class="resize-zone resize-nw" data-resize-edge="nw" aria-hidden="true"></div>
 <div class="resize-zone resize-se" data-resize-edge="se" aria-hidden="true"></div>
 <div class="resize-zone resize-sw" data-resize-edge="sw" aria-hidden="true"></div>
+<script src="avatar-menu-warp.js" defer></script>
 <script src="avatar-menu.js" defer></script>
 </body></html>

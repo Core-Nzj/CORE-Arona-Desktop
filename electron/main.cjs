@@ -7,8 +7,8 @@ const { resolveAssetPath } = require('./asset-path.cjs');
 const { scanMotionLibrary, readMotionFile } = require('./motion-library.cjs');
 const { FramePluginHost } = require('./plugin-host.cjs');
 const {
-  BASE_WIDTH, BASE_HEIGHT, INITIAL_SCALE, MIN_SCALE,
-  clampScale, windowSizeForScale, boundsForScale
+  BASE_WIDTH, BASE_HEIGHT, INITIAL_SCALE, MIN_SCALE, ZOOM_IN_FACTOR,
+  clampScale, resolveZoomScale, startupScaleForArea, windowSizeForScale, boundsForScale
 } = require('./avatar-window-size.cjs');
 const { VoiceProxyClient, PROXY_ORIGIN } = require('./voice-proxy.cjs');
 const { VoiceCredentialStore } = require('./voice-credentials.cjs');
@@ -19,8 +19,10 @@ const { SpeechBridge } = require('./speech-bridge.cjs');
 const { readSpeechText, copySpeechToken } = require('./clipboard-actions.cjs');
 const { voiceKey, globalParameters } = require('./speech-settings.cjs');
 const {
-  DEFAULT_WIDTH, DEFAULT_HEIGHT, EDGES,
-  normalizeMenuLayout, changeMenuZoom, resizeMenuBounds
+  DEFAULT_WIDTH, DEFAULT_HEIGHT, LAYOUT_VERSION, EDGES,
+  normalizeMenuLayout, restoreMenuLayout: normalizeSavedMenuLayout,
+  changeMenuZoom, resizeMenuBounds,
+  TEXT_SIZE_VERSION, DEFAULT_TEXT_SIZE, normalizeTextSize, restoreTextSize
 } = require('./menu-layout.cjs');
 
 // Desktop speech may start from a native context-menu action.
@@ -53,11 +55,32 @@ protocol.registerSchemesAsPrivileged([{
 }]);
 
 let mainWindow;
+let exitWarpPending = false;
+let exitWarpComplete = false;
+let exitWarpTimeout = null;
+function completeExitWarp() {
+  if (exitWarpComplete) return;
+  exitWarpComplete = true;
+  exitWarpPending = false;
+  if (exitWarpTimeout) clearTimeout(exitWarpTimeout);
+  exitWarpTimeout = null;
+  app.quit(); // Continue with the existing VoiSona cleanup and window teardown.
+}
 let avatarScale = INITIAL_SCALE;
 let settingsWindow = null;
 let menuWindow = null;
 let motionFolderDialogOpen = false;
 let menuLayout = { width: DEFAULT_WIDTH, height: DEFAULT_HEIGHT, zoom: 1 };
+let menuTextSize = DEFAULT_TEXT_SIZE;
+// Session-only navigation state. Closing FRAME clears this automatically.
+const MENU_TABS = ['home', 'motion', 'voice', 'plugins', 'emotion', 'status'];
+const MENU_TAB_SET = new Set(MENU_TABS);
+let menuViewState = {
+  tab: 'home',
+  scroll: Object.fromEntries(MENU_TABS.map(tab => [tab, 0])),
+  motionList: 0,
+  voiceList: 0
+};
 let menuResize = null;
 let menuLayoutSave = Promise.resolve();
 const proxyManager = new ProxyManager();
@@ -71,12 +94,16 @@ let proxyStartup = null;
 let currentModelFile = null;
 let dragTimer = null;
 let dragStart = null;
+let walkTimer = null;
+let walkState = null;
 let idleDiagnostics = 'モーションの読み込みを待っています';
 let motionDirectory = null;
 let motionEntries = [];
 let motionSelectedId = null;
 let motionIdleId = null;
 let motionLibraryMessage = '未検索';
+let motionWarpEnabled = true;
+let motionTransitionMode = 'auto';
 const voiceClient = new VoiceProxyClient();
 let voiceEntries = [];
 let voiceError = '接続を確認していません';
@@ -317,7 +344,9 @@ function infoForCurrentModel() {
   if (!currentModelFile) return null;
   return {
     name: path.basename(currentModelFile),
-    url: SCHEME + '://model/' + encodeURIComponent(path.basename(currentModelFile))
+    url: SCHEME + '://model/' + encodeURIComponent(path.basename(currentModelFile)),
+    motionWarpEnabled,
+    motionTransitionMode
   };
 }
 
@@ -337,6 +366,8 @@ async function restoreModelSelection() {
     }
     if (typeof settings.motionIdleId === 'string') motionIdleId = settings.motionIdleId;
     if (typeof settings.motionSelectedId === 'string') motionSelectedId = settings.motionSelectedId;
+    if (typeof settings.motionWarpEnabled === 'boolean') motionWarpEnabled = settings.motionWarpEnabled;
+    if (['auto', 'blend', 'warp'].includes(settings.motionTransitionMode)) motionTransitionMode = settings.motionTransitionMode;
     if (typeof settings.modelPath !== 'string') return;
     if (!['.pmx', '.pmd'].includes(path.extname(settings.modelPath).toLowerCase())) return;
     const stats = await fs.stat(settings.modelPath);
@@ -357,7 +388,9 @@ async function saveModelSelection() {
     voisonaExecutable: voisonaPrefs.executable,
     motionDirectory,
     motionIdleId,
-    motionSelectedId
+    motionSelectedId,
+    motionWarpEnabled,
+    motionTransitionMode
   }, null, 2), 'utf8');
 }
 
@@ -503,6 +536,48 @@ function setAvatarRegion(rects) {
   if (checked.length) mainWindow.setShape(checked);
 }
 
+// Native window motion is driven here rather than by DOM mouse deltas, which
+// are unreliable while a transparent, shaped Electron window is moving.
+function stopAvatarWalk(notify = false) {
+  if (walkTimer !== null) clearInterval(walkTimer);
+  walkTimer = null;
+  walkState = null;
+  if (notify && mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('avatar:walk-stopped');
+  }
+}
+
+function beginAvatarWalk(direction, speed) {
+  stopAvatarWalk();
+  if (!mainWindow || mainWindow.isDestroyed() ||
+      ![-1, 1].includes(direction) || !Number.isFinite(speed)) return;
+  stopAvatarDrag();
+  const actualSpeed = Math.max(20, Math.min(360, speed));
+  const bounds = mainWindow.getBounds();
+  walkState = { direction, speed: actualSpeed, x: bounds.x, last: performance.now() };
+  walkTimer = setInterval(() => {
+    const state = walkState;
+    if (!state || !mainWindow || mainWindow.isDestroyed()) {
+      stopAvatarWalk();
+      return;
+    }
+    const bounds = mainWindow.getBounds();
+    const area = screen.getDisplayMatching(bounds).workArea;
+    const minimum = area.x;
+    const maximum = Math.max(minimum, area.x + area.width - bounds.width);
+    const now = performance.now();
+    const dt = Math.max(0, Math.min(0.1, (now - state.last) / 1000));
+    state.last = now;
+    state.x = Math.min(maximum, Math.max(minimum, state.x + state.direction * state.speed * dt));
+    const next = Math.round(state.x);
+    if (next !== bounds.x) mainWindow.setPosition(next, bounds.y);
+    if ((state.direction > 0 && state.x >= maximum) ||
+        (state.direction < 0 && state.x <= minimum)) {
+      stopAvatarWalk(true); // Stop before the model would slide beyond the screen.
+    }
+  }, 16);
+}
+
 function stopAvatarDrag() {
   if (dragTimer !== null) {
     clearInterval(dragTimer);
@@ -513,6 +588,7 @@ function stopAvatarDrag() {
 
 function startAvatarDrag() {
   if (!mainWindow || mainWindow.isDestroyed()) return;
+  stopAvatarWalk(true);
   stopAvatarDrag();
   dragStart = {
     pointer: screen.getCursorScreenPoint(),
@@ -542,6 +618,7 @@ function startAvatarDrag() {
 
 function zoomAvatarWindow(action) {
   if (!mainWindow || mainWindow.isDestroyed()) return;
+  stopAvatarWalk(true);
   const steps = action === 'in' ? 1 : action === 'out' ? -1
     : typeof action === 'number' && Number.isFinite(action) && Math.abs(action) <= 2
       ? action : null;
@@ -549,8 +626,8 @@ function zoomAvatarWindow(action) {
   const currentBounds = mainWindow.getBounds();
   const workArea = screen.getDisplayMatching(currentBounds).workArea;
   const requestedScale = action === 'reset'
-    ? clampScale(INITIAL_SCALE, workArea)
-    : avatarScale * Math.pow(1 / 0.85, steps);
+    ? startupScaleForArea(workArea)
+    : avatarScale * Math.pow(ZOOM_IN_FACTOR, steps);
   // Center-based anchoring avoids the cursor/window oscillation on resize.
   const { bounds, scale, cameraZoom } =
     boundsForScale(currentBounds, workArea, requestedScale);
@@ -588,14 +665,21 @@ function menuLayoutFile() {
 async function restoreMenuLayout() {
   try {
     const value = JSON.parse(await fs.readFile(menuLayoutFile(), 'utf8'));
-    menuLayout = normalizeMenuLayout(value, screen.getPrimaryDisplay().workArea);
+    menuLayout = normalizeSavedMenuLayout(value, screen.getPrimaryDisplay().workArea);
+    menuTextSize = restoreTextSize(value);
+    if (value.version !== LAYOUT_VERSION || value.textSizeVersion !== TEXT_SIZE_VERSION) {
+      saveMenuLayout();
+    }
   } catch {
     // Missing or invalid local preferences: use defaults.
   }
 }
 
 function saveMenuLayout() {
-  const snapshot = JSON.stringify(menuLayout, null, 2);
+  const snapshot = JSON.stringify({
+    ...menuLayout, textSize: menuTextSize,
+    textSizeVersion: TEXT_SIZE_VERSION, version: LAYOUT_VERSION
+  }, null, 2);
   menuLayoutSave = menuLayoutSave.catch(() => {}).then(async () => {
     const destination = menuLayoutFile();
     await fs.mkdir(path.dirname(destination), { recursive: true });
@@ -648,7 +732,11 @@ function moveMenuResize() {
 function menuState() {
   return {
     modelName: currentModelFile ? path.basename(currentModelFile) : '未選択',
+    textSize: menuTextSize,
+    viewState: menuViewState,
     motionStatus: idleDiagnostics.split('\n')[0],
+    motionWarpEnabled,
+    motionTransitionMode,
     motionLibrary: {
       directory: motionDirectory || '',
       entries: motionEntries,
@@ -674,28 +762,61 @@ function menuState() {
   };
 }
 
-function closeAvatarMenu() {
-  pluginHost?.clearCapture();
-  const popup = menuWindow;
-  finishMenuResize();
-  menuWindow = null;
-  if (popup && !popup.isDestroyed()) popup.close();
+// Keep the settings renderer warm, so a right-click starts the effect
+// immediately instead of paying for a new BrowserWindow on every open.
+let menuPrepared = false;
+let menuPendingOpen = false;
+let menuClosing = false;
+let menuTransition = 0;
+let menuHideTimer = null;
+let menuCaptureGeneration = 0;
+
+function finishMenuHide(generation) {
+  if (generation !== menuTransition || !menuClosing ||
+      !menuWindow || menuWindow.isDestroyed()) return;
+  menuClosing = false;
+  if (menuHideTimer) clearTimeout(menuHideTimer);
+  menuHideTimer = null;
+  menuWindow.hide();
 }
 
-function showAvatarMenu() {
-  if (!mainWindow || mainWindow.isDestroyed() || !currentModelFile) return;
-  closeAvatarMenu();
-  stopAvatarDrag();
-  const pointer = screen.getCursorScreenPoint();
-  const area = screen.getDisplayNearestPoint(pointer).workArea;
-  const layout = normalizeMenuLayout(menuLayout, area);
-  const { width, height } = layout;
-  const x = Math.max(area.x, Math.min(pointer.x + 12, area.x + area.width - width));
-  const y = Math.max(area.y, Math.min(pointer.y + 10, area.y + area.height - height));
+function closeAvatarMenu(force = false) {
+  ++menuCaptureGeneration;
+  pluginHost?.clearCapture();
+  finishMenuResize();
+  if (!menuWindow || menuWindow.isDestroyed()) return;
+  if (force) {
+    menuPendingOpen = false;
+    menuClosing = false;
+    ++menuTransition;
+    if (menuHideTimer) clearTimeout(menuHideTimer);
+    menuHideTimer = null;
+    const popup = menuWindow;
+    menuWindow = null;
+    menuPrepared = false;
+    popup.destroy();
+    return;
+  }
+  if (!menuWindow.isVisible() || menuClosing) {
+    menuPendingOpen = false;
+    return;
+  }
+  menuClosing = true;
+  const generation = menuTransition;
+  menuWindow.webContents.send('avatar-menu:close-animation', generation);
+  // Fallback if renderer animation is throttled or interrupted by focus loss.
+  menuHideTimer = setTimeout(() => finishMenuHide(generation), 400);
+}
+
+function createAvatarMenuWindow() {
+  if (!mainWindow || mainWindow.isDestroyed() ||
+      (menuWindow && !menuWindow.isDestroyed())) return;
+  const area = screen.getPrimaryDisplay().workArea;
+  const { width, height } = normalizeMenuLayout(menuLayout, area);
   const popup = new BrowserWindow({
     parent: mainWindow,
     title: 'FRAME / Settings',
-    x, y, width, height,
+    x: area.x, y: area.y, width, height,
     frame: false,
     transparent: true,
     backgroundColor: '#00000000',
@@ -707,7 +828,6 @@ function showAvatarMenu() {
     hasShadow: true,
     webPreferences: {
       preload: path.join(__dirname, 'avatar-menu-preload.cjs'),
-      // Keep menu text zoom isolated from the MMD renderer and settings dialog.
       partition: 'frame-panel-ui',
       contextIsolation: true,
       sandbox: true,
@@ -716,30 +836,68 @@ function showAvatarMenu() {
     }
   });
   menuWindow = popup;
+  menuPrepared = false;
   popup.setMenuBarVisibility(false);
   popup.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   popup.webContents.on('will-navigate', event => event.preventDefault());
   popup.webContents.on('did-finish-load', () => {
-    if (!popup.isDestroyed() && menuWindow === popup) {
-      popup.webContents.setZoomFactor(menuLayout.zoom);
-    }
-  });
-  popup.once('ready-to-show', () => {
     if (menuWindow !== popup || popup.isDestroyed()) return;
-    popup.show();
-    popup.focus();
+    popup.webContents.setZoomFactor(menuLayout.zoom);
+    // A fully transparent prewarmed page may never emit ready-to-show on
+    // some GPU drivers. Script-load completion is enough for an instant open.
+    menuPrepared = true;
+    if (menuPendingOpen) showAvatarMenu();
   });
   popup.on('blur', () => {
-    if (menuWindow === popup && !menuResize && !motionFolderDialogOpen) closeAvatarMenu();
+    if (menuWindow === popup && popup.isVisible() && !menuResize &&
+        !motionFolderDialogOpen && !menuClosing) closeAvatarMenu();
   });
   popup.on('closed', () => {
     if (menuResize?.window === popup) menuResize = null;
-    if (menuWindow === popup) menuWindow = null;
+    if (menuWindow === popup) {
+      ++menuCaptureGeneration;
+      pluginHost?.clearCapture();
+      menuWindow = null;
+      menuPrepared = false;
+      menuClosing = false;
+    }
   });
   popup.loadFile(path.join(__dirname, 'avatar-menu.html')).catch(error => {
     console.error('[CORE menu] load failed:', error);
-    if (menuWindow === popup) closeAvatarMenu();
+    if (menuWindow === popup) closeAvatarMenu(true);
   });
+}
+
+function showAvatarMenu() {
+  if (!mainWindow || mainWindow.isDestroyed() || !currentModelFile) return;
+  stopAvatarDrag();
+  if (!menuWindow || menuWindow.isDestroyed()) createAvatarMenuWindow();
+  if (!menuWindow || menuWindow.isDestroyed()) return;
+  if (!menuPrepared) { menuPendingOpen = true; return; }
+  const popup = menuWindow;
+  const generation = ++menuTransition;
+  menuPendingOpen = false;
+  menuClosing = false;
+  if (menuHideTimer) clearTimeout(menuHideTimer);
+  menuHideTimer = null;
+  const pointer = screen.getCursorScreenPoint();
+  const area = screen.getDisplayNearestPoint(pointer).workArea;
+  const layout = normalizeMenuLayout(menuLayout, area);
+  const { width, height } = layout;
+  const x = Math.max(area.x, Math.min(pointer.x + 12, area.x + area.width - width));
+  const y = Math.max(area.y, Math.min(pointer.y + 10, area.y + area.height - height));
+  popup.setBounds({ x, y, width, height }, false);
+  // Fire the blue transfer immediately. The view snapshot is local and
+  // already available; optional VoiSona status refresh happens afterward.
+  popup.webContents.send('avatar-menu:open', generation, menuState());
+  popup.show();
+  popup.focus();
+  void voisonaManager.refresh().then(() => {
+    if (menuWindow === popup && !popup.isDestroyed() && popup.isVisible() &&
+        generation === menuTransition && !menuClosing) {
+      popup.webContents.send('avatar-menu:state-update', menuState());
+    }
+  }).catch(error => console.warn('[FRAME UI] voice status refresh failed:', error?.message));
 }
 
 function isMenuWindow(event) {
@@ -763,7 +921,17 @@ async function executeMenuAction(action, value) {
       mainWindow.webContents.send('avatar:motion-command', { type: 'play', ...motion });
       return 'VMDを送信しました: ' + motion.name;
     }
+    case 'motion.walkLeft': case 'motion.walkRight':
+      mainWindow.webContents.send('avatar:motion-command', {
+        type: 'walk', direction: action === 'motion.walkLeft' ? -1 : 1
+      });
+      return action === 'motion.walkLeft' ? '左へ歩きます' : '右へ歩きます';
+    case 'motion.walkStop':
+      stopAvatarWalk();
+      mainWindow.webContents.send('avatar:motion-command', { type: 'walk-stop' });
+      return '歩行を停止します';
     case 'motion.stop':
+      stopAvatarWalk();
       mainWindow.webContents.send('avatar:motion-command', { type: 'stop' });
       return '待機モーションへ戻します';
     case 'motion.folder': {
@@ -818,6 +986,17 @@ async function executeMenuAction(action, value) {
       mainWindow.webContents.send('avatar:motion-command', { type: 'idle', ...motion });
       return '待機モーションに設定しました: ' + motion.name;
     }
+    case 'motion.transition':
+      if (!['auto', 'blend', 'warp'].includes(value)) throw new Error('不正な遷移方式です');
+      motionTransitionMode = value;
+      await saveModelSelection();
+      mainWindow.webContents.send('avatar:motion-transition-mode', value);
+      return '切り替え方式: ' + ({ auto: '自動', blend: 'ブレンド優先', warp: 'デジタル転送' }[value]);
+    case 'motion.warpToggle':
+      motionWarpEnabled = !motionWarpEnabled;
+      await saveModelSelection();
+      mainWindow.webContents.send('avatar:motion-warp-enabled', motionWarpEnabled);
+      return 'デジタル転送演出: ' + (motionWarpEnabled ? 'ON' : 'OFF');
     case 'motion.resetIdle':
       motionIdleId = null;
       await saveModelSelection();
@@ -852,7 +1031,13 @@ async function executeMenuAction(action, value) {
       try { selected = JSON.parse(value); } catch { throw new Error('撮影対象が不正です'); }
       if (!selected || typeof selected.pluginId !== 'string' ||
           typeof selected.windowId !== 'string') throw new Error('撮影対象が不正です');
+      const generation = menuCaptureGeneration;
       const image = await pluginHost.captureWindow(selected.pluginId, selected.windowId);
+      // A pending capture must not repopulate a closed or reopened panel.
+      if (generation !== menuCaptureGeneration) {
+        pluginHost.clearCapture();
+        throw new Error('設定画面を閉じたため撮影画像を破棄しました');
+      }
       return image.title + ' を撮影しました（ローカルのみ、保存なし）';
     }
     case 'plugin.clearCapture':
@@ -976,10 +1161,12 @@ async function executeMenuAction(action, value) {
 }
 
 function createWindow() {
-  // Start near the previously requested 2x avatar size, without clipping
-  // outside the current monitor's working area.
-  avatarScale = clampScale(INITIAL_SCALE, screen.getPrimaryDisplay().workArea);
-  const { width, height } = windowSizeForScale(avatarScale);
+  // The initial pose equals five "zoom in" clicks from the old 2x default.
+  // Cap native bounds to the monitor, retaining excess size as camera zoom.
+  const workArea = screen.getPrimaryDisplay().workArea;
+  const startupZoom = resolveZoomScale(startupScaleForArea(workArea), workArea);
+  avatarScale = startupZoom.scale;
+  const { width, height } = windowSizeForScale(startupZoom.nativeScale);
   mainWindow = new BrowserWindow({
     title: 'CORE Arona Desktop',
     width,
@@ -1012,8 +1199,17 @@ function createWindow() {
     const { cameraZoom } = boundsForScale(mainWindow.getBounds(), area, avatarScale);
     mainWindow.webContents.send('avatar:camera-zoom', cameraZoom);
   });
+  mainWindow.on('close', event => {
+    // Closing the frame directly (taskbar/OS) must use the same animation as
+    // the in-app Exit button. An app.quit() call can be cancelled before close.
+    if (!exitWarpComplete) {
+      event.preventDefault();
+      app.quit();
+    }
+  });
   mainWindow.on('closed', () => {
-    closeAvatarMenu();
+    stopAvatarWalk();
+    closeAvatarMenu(true);
     stopAvatarDrag();
     voiceSynthesis?.abort();
     mainWindow = null;
@@ -1045,9 +1241,8 @@ app.whenReady().then(async () => {
   ipcMain.on('avatar:menu', event => {
     if (isOurWindow(event) && currentModelFile) showAvatarMenu();
   });
-  ipcMain.handle('avatar-menu:state', async event => {
+  ipcMain.handle('avatar-menu:state', event => {
     if (!isMenuWindow(event)) throw new Error('Unauthorized menu request');
-    await voisonaManager.refresh();
     return menuState();
   });
   ipcMain.handle('avatar-menu:action', async (event, action, value) => {
@@ -1080,8 +1275,39 @@ app.whenReady().then(async () => {
     menuWindow.webContents.setZoomFactor(menuLayout.zoom);
     saveMenuLayout();
   });
+  ipcMain.on('avatar-menu:text-size', (event, percent) => {
+    if (!isMenuWindow(event) || !Number.isInteger(percent) ||
+        percent !== normalizeTextSize(percent)) return;
+    if (menuTextSize === percent) return;
+    menuTextSize = percent;
+    saveMenuLayout();
+  });
+  ipcMain.on('avatar-menu:view-state', (event, state) => {
+    if (!isMenuWindow(event) || !state || typeof state !== 'object' ||
+        !MENU_TAB_SET.has(state.tab)) return;
+    const safeScroll = value => Number.isFinite(value)
+      ? Math.round(Math.max(0, Math.min(value, 100000))) : 0;
+    menuViewState = {
+      tab: state.tab,
+      scroll: Object.fromEntries(MENU_TABS.map(tab => [tab, safeScroll(state.scroll?.[tab])])),
+      motionList: safeScroll(state.motionList),
+      voiceList: safeScroll(state.voiceList)
+    };
+  });
   ipcMain.on('avatar-menu:close', event => {
     if (isMenuWindow(event)) closeAvatarMenu();
+  });
+  ipcMain.on('avatar-menu:close-complete', (event, generation) => {
+    if (isMenuWindow(event) && Number.isInteger(generation)) finishMenuHide(generation);
+  });
+  ipcMain.on('avatar:walk-velocity', (event, direction, speed) => {
+    if (!isOurWindow(event)) return;
+    if (direction === 0) {
+      stopAvatarWalk();
+    } else if ([-1, 1].includes(direction) && Number.isFinite(speed) &&
+               speed >= 0 && speed <= 1000 && currentModelFile && !exitWarpPending) {
+      beginAvatarWalk(direction, speed);
+    }
   });
   ipcMain.on('avatar:zoom', (event, action) => {
     if (isOurWindow(event) && currentModelFile) zoomAvatarWindow(action);
@@ -1186,6 +1412,9 @@ app.whenReady().then(async () => {
   ipcMain.on('avatar:quit', event => {
     if (mainWindow && event.sender === mainWindow.webContents) app.quit();
   });
+  ipcMain.on('avatar:quit-ready', event => {
+    if (isOurWindow(event) && exitWarpPending) completeExitWarp();
+  });
 
   credentialStore = new VoiceCredentialStore({
     safeStorage, userDataPath: app.getPath('userData')
@@ -1212,6 +1441,7 @@ app.whenReady().then(async () => {
     console.warn('[CORE Voice] encrypted settings cannot be restored:', error?.message);
   }
   createWindow();
+  createAvatarMenuWindow(); // Prewarm once during startup, not on right-click.
   speechBridge = new SpeechBridge({
     userDataPath: app.getPath('userData'),
     safeStorage,
@@ -1239,6 +1469,25 @@ app.whenReady().then(async () => {
 let voiceShutdownPending = false;
 let voiceShutdownComplete = false;
 app.on('before-quit', event => {
+  if (!exitWarpComplete) {
+    if (mainWindow && !mainWindow.isDestroyed() &&
+        !mainWindow.webContents.isLoadingMainFrame()) {
+      event.preventDefault();
+      if (exitWarpPending) return;
+      exitWarpPending = true;
+      stopAvatarWalk();
+      closeAvatarMenu(true); // The popup must not cover the disappearing avatar.
+      mainWindow.webContents.send('avatar:prepare-quit');
+      // The 260ms exit transfer cannot block quitting if rendering stalls.
+      exitWarpTimeout = setTimeout(() => {
+        console.warn('[FRAME warp] exit animation timed out; closing safely');
+        completeExitWarp();
+      }, 2500);
+      return;
+    }
+    // Early boot failure or no remaining avatar window: quit immediately.
+    exitWarpComplete = true;
+  }
   if (!voiceShutdownComplete) {
     event.preventDefault();
     if (voiceShutdownPending) return;
@@ -1251,7 +1500,7 @@ app.on('before-quit', event => {
     });
     return;
   }
-  closeAvatarMenu();
+  closeAvatarMenu(true);
   browserCredentialPortal?.close();
   speechBridge?.close();
   proxyManager.stop();

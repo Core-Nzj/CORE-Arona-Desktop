@@ -4,6 +4,34 @@ const feedback = document.getElementById('feedback');
 const voiceList = document.getElementById('voice-list');
 const emotionList = document.getElementById('emotion-list');
 const motionList = document.getElementById('motion-list');
+const textSizeSlider = document.getElementById('text-size');
+const textSizeValue = document.getElementById('text-size-value');
+const panelWarp = new window.PanelDigitalWarp(
+  document.querySelector('.shell'), document.getElementById('panel-warp')
+);
+let menuOpenGeneration = 0;
+
+function applyTextSize(percent) {
+  if (!Number.isInteger(percent) || percent < 0 || percent > 200 || percent % 5 !== 0) return;
+  document.documentElement.style.setProperty('--text-scale', String(percent * 1.6 / 100));
+  document.documentElement.classList.toggle('text-size-zero', percent === 0);
+  textSizeSlider.value = String(percent);
+  textSizeSlider.style.setProperty('--range-progress', (percent / 2) + '%');
+  textSizeSlider.setAttribute('aria-valuetext', percent + '%');
+  textSizeValue.textContent = percent + '%';
+}
+function saveTextSize() {
+  window.aronaMenu.setTextSize(Number(textSizeSlider.value));
+}
+textSizeSlider.addEventListener('input', () => applyTextSize(Number(textSizeSlider.value)));
+textSizeSlider.addEventListener('change', saveTextSize);
+function resetTextSize() {
+  applyTextSize(100);
+  saveTextSize();
+}
+document.getElementById('text-size-reset').addEventListener('click', resetTextSize);
+document.getElementById('text-size-recover').addEventListener('click', resetTextSize);
+
 let busy = false;
 let selectedWindowId = null;
 let selectedWindowPluginId = null;
@@ -16,16 +44,79 @@ function message(value, error = false) {
   feedback.textContent = value;
   feedback.classList.toggle('error', error);
 }
+// The prewarmed popup stays alive between opens. The Electron main process
+// retains its navigation position in memory and resets it when FRAME exits.
+const menuPages = [...document.querySelectorAll('[data-page]')];
+const menuTabs = [...document.querySelectorAll('[data-tab]')];
+const pageScroll = Object.fromEntries(menuPages.map(page => [page.dataset.page, 0]));
+const nestedScroll = { motionList: 0, voiceList: 0 };
+let activeTab = 'home';
+let viewReady = false;
+
+function saveCurrentPosition() {
+  const current = menuPages.find(page => page.dataset.page === activeTab);
+  if (current && !current.hidden) pageScroll[activeTab] = current.scrollTop;
+  if (activeTab === 'motion') nestedScroll.motionList = motionList.scrollTop;
+  if (activeTab === 'voice') nestedScroll.voiceList = voiceList.scrollTop;
+}
+function saveViewState() {
+  if (!viewReady) return;
+  saveCurrentPosition();
+  window.aronaMenu.saveViewState({
+    tab: activeTab,
+    scroll: { ...pageScroll },
+    motionList: nestedScroll.motionList,
+    voiceList: nestedScroll.voiceList
+  });
+}
 function tabTo(name) {
-  for (const panel of document.querySelectorAll('[data-page]')) {
-    panel.hidden = panel.dataset.page !== name;
-  }
-  for (const tab of document.querySelectorAll('[data-tab]')) {
+  if (!Object.hasOwn(pageScroll, name)) return;
+  if (viewReady) saveCurrentPosition();
+  for (const panel of menuPages) panel.hidden = panel.dataset.page !== name;
+  for (const tab of menuTabs) {
     const active = tab.dataset.tab === name;
     tab.classList.toggle('selected', active);
     tab.setAttribute('aria-selected', String(active));
   }
+  activeTab = name;
+  menuPages.find(page => page.dataset.page === name).scrollTop = pageScroll[name];
+  if (name === 'motion') motionList.scrollTop = nestedScroll.motionList;
+  if (name === 'voice') voiceList.scrollTop = nestedScroll.voiceList;
+  saveViewState();
 }
+function restoreViewState(value, onReady = () => {}) {
+  const saved = value && typeof value === 'object' ? value : {};
+  const safeScroll = value => Number.isFinite(value)
+    ? Math.max(0, Math.min(100000, Math.round(value))) : 0;
+  for (const page of menuPages) pageScroll[page.dataset.page] = safeScroll(saved.scroll?.[page.dataset.page]);
+  nestedScroll.motionList = safeScroll(saved.motionList);
+  nestedScroll.voiceList = safeScroll(saved.voiceList);
+  const tab = Object.hasOwn(pageScroll, saved.tab) ? saved.tab : 'home';
+  viewReady = false;
+  tabTo(tab);
+  requestAnimationFrame(() => {
+    tabTo(tab);
+    viewReady = true;
+    onReady();
+  });
+}
+for (const page of menuPages) {
+  page.addEventListener('scroll', () => {
+    if (!viewReady || page.hidden) return;
+    pageScroll[page.dataset.page] = page.scrollTop;
+    saveViewState();
+  }, { passive: true });
+}
+motionList.addEventListener('scroll', () => {
+  if (!viewReady || activeTab !== 'motion') return;
+  nestedScroll.motionList = motionList.scrollTop;
+  saveViewState();
+}, { passive: true });
+voiceList.addEventListener('scroll', () => {
+  if (!viewReady || activeTab !== 'voice') return;
+  nestedScroll.voiceList = voiceList.scrollTop;
+  saveViewState();
+}, { passive: true });
 function makeOption(label, id, selected, enabled, action) {
   const element = document.createElement('button');
   element.type = 'button';
@@ -42,6 +133,7 @@ function makeOption(label, id, selected, enabled, action) {
 function renderState(state) {
   if (!state || typeof state !== 'object') return;
   currentState = state;
+  applyTextSize(state.textSize);
   document.getElementById('model-name').textContent = state.modelName || '未選択';
   document.getElementById('motion-status').textContent = state.motionStatus || '標準待機モーション';
   const library = state.motionLibrary || {};
@@ -49,6 +141,15 @@ function renderState(state) {
   const selected = entries.find(entry => entry.id === library.selectedId);
   const selectedIdle = entries.find(entry => entry.id === library.idleId);
   document.getElementById('motion-count').textContent = entries.length + '件';
+  for (const choice of document.querySelectorAll('.transition-choice')) {
+    const selected = choice.dataset.value === (state.motionTransitionMode || 'auto');
+    choice.classList.toggle('selected', selected);
+    choice.setAttribute('aria-pressed', String(selected));
+  }
+  document.getElementById('motion-warp-toggle').textContent =
+    'デジタル転送演出 ' + (state.motionWarpEnabled !== false ? 'ON' : 'OFF');
+  document.getElementById('motion-warp-toggle').setAttribute(
+    'aria-pressed', String(state.motionWarpEnabled !== false));
   document.getElementById('motion-folder').textContent = library.directory || 'フォルダ未設定';
   document.getElementById('motion-library-status').textContent = library.message || '';
   document.getElementById('motion-selected').textContent = '選択中: ' + (selected?.name || 'なし');
@@ -116,7 +217,9 @@ function renderState(state) {
     empty.textContent = '音声ライブラリがありません';
     voiceButtons.push(empty);
   }
+  const voiceScrollTop = voiceList.scrollTop;
   voiceList.replaceChildren(...voiceButtons);
+  voiceList.scrollTop = voiceScrollTop;
   document.querySelector('[data-action="voice.test"]').disabled = !voices.length;
   document.querySelector('[data-action="voice.token"]').disabled = !state.tokenReady;
   const options = [['neutral','通常'],['happy','笑顔'],['angry','怒り'],['sad','悲しみ'],['surprised','驚き']];
@@ -301,7 +404,7 @@ for (const zone of document.querySelectorAll('[data-resize-edge]')) {
     });
   }
 }
-window.addEventListener('blur', endResize);
+window.addEventListener('blur', () => { endResize(); saveViewState(); });
 
 function openPreviewLightbox() {
   const preview = currentState?.plugins?.capture;
@@ -322,17 +425,31 @@ function closePreviewLightbox(restoreFocus = true) {
   }
 }
 
+function discardCapture() {
+  lastCaptureRequest = null;
+  lastPluginError = '';
+  closePreviewLightbox(false);
+  if (currentState) {
+    currentState = { ...currentState, plugins: { ...currentState.plugins, capture: null } };
+    renderState(currentState);
+  }
+}
+
 const keepOpen = new Set([
   'voice.refresh', 'voice.select', 'emotion.select',
   'voice.autoStart', 'voice.autoHide', 'voice.appHide',
   'motion.folder', 'motion.refresh', 'motion.preview', 'motion.next',
-  'motion.previous', 'motion.setIdle', 'motion.stop', 'motion.resetIdle',
+  'motion.previous', 'motion.setIdle', 'motion.stop', 'motion.resetIdle', 'motion.warpToggle',
+  'motion.transition',
   'plugin.folder', 'plugin.refresh', 'plugin.toggle', 'plugin.listWindows',
   'plugin.captureWindow', 'plugin.clearCapture'
 ]);
 
 async function runAction(action, value) {
-  if (busy) return;
+  if (busy || panelWarp.phase === 'closed' || panelWarp.phase === 'closing') return;
+  const generation = menuOpenGeneration;
+  const isCurrent = () => generation === menuOpenGeneration &&
+    panelWarp.phase !== 'closed' && panelWarp.phase !== 'closing';
   if (action === 'plugin.previewOpen') { openPreviewLightbox(); return; }
   if (action === 'plugin.previewClose') { closePreviewLightbox(); return; }
 
@@ -370,12 +487,18 @@ async function runAction(action, value) {
   if (isPlugin && currentState) renderState(currentState);
   try {
     const result = await window.aronaMenu.action(action, value);
+    if (!isCurrent()) return;
     if (!result?.ok) {
       if (isPlugin) {
         lastPluginError = String(result?.message || '操作に失敗しました');
         // A capture error clears the image in the host; fetch fresh state.
-        try { renderState(await window.aronaMenu.state()); }
+        try {
+          const state = await window.aronaMenu.state();
+          if (!isCurrent()) return;
+          renderState(state);
+        }
         catch (stateError) {
+          if (!isCurrent()) return;
           lastPluginError += '\n状態更新に失敗: ' + String(stateError?.message ?? stateError);
         }
         message('操作に失敗しました。拡張タブに詳細を表示しています。', true);
@@ -389,18 +512,26 @@ async function runAction(action, value) {
       }
       if (result.state) renderState(result.state);
       message(result.message || '完了しました');
-      if (!keepOpen.has(action)) window.aronaMenu.close();
+      if (!keepOpen.has(action)) { saveViewState(); window.aronaMenu.close(); }
     }
   } catch (error) {
+    if (!isCurrent()) return;
     if (isPlugin) lastPluginError = String(error?.message ?? error);
     message('操作できませんでした: ' + String(error?.message ?? error).slice(0, 200), true);
     if (isPlugin) {
-      try { renderState(await window.aronaMenu.state()); } catch { /* Keep original error. */ }
+      try {
+        const state = await window.aronaMenu.state();
+        if (isCurrent()) renderState(state);
+      } catch { /* Keep original error. */ }
     }
   } finally {
     busy = false;
     captureBusy = false;
-    if (isPlugin && currentState) renderState(currentState);
+    // Re-enable controls even if the panel reopened while this action ran.
+    // Only redraw the latest snapshot; the old result was discarded above.
+    if (currentState && panelWarp.phase !== 'closed' && panelWarp.phase !== 'closing') {
+      renderState(currentState);
+    }
   }
 }
 
@@ -418,7 +549,7 @@ document.addEventListener('click', event => {
   const target = event.target.closest('[data-action]');
   if (target && !target.disabled) void runAction(target.dataset.action, target.dataset.value);
 });
-document.getElementById('close').addEventListener('click', () => window.aronaMenu.close());
+document.getElementById('close').addEventListener('click', () => { saveViewState(); window.aronaMenu.close(); });
 document.addEventListener('keydown', event => {
   if (event.key === 'Escape') {
     if (!document.getElementById('plugin-lightbox').hidden) {
@@ -427,6 +558,7 @@ document.addEventListener('keydown', event => {
       return;
     }
     if (resizing) endResize();
+    saveViewState();
     window.aronaMenu.close();
     return;
   }
@@ -438,7 +570,26 @@ document.addEventListener('keydown', event => {
   event.preventDefault();
   window.aronaMenu.zoom(reset ? 'reset' : plus ? 'in' : 'out');
 });
-window.aronaMenu.state().then(state => {
+// The open event carries a synchronous snapshot: no voice-engine/network wait
+// and no flash of the previous tab before its scroll position is restored.
+window.aronaMenu.onOpen((generation, state) => {
+  menuOpenGeneration = generation;
+  panelWarp.open();
   renderState(state);
-  message('FRAME / READY');
-}).catch(error => message('メニューを初期化できません: ' + String(error?.message ?? error), true));
+  restoreViewState(state?.viewState, () => {
+    if (menuOpenGeneration !== generation) return;
+    panelWarp.ready();
+    message('FRAME / READY');
+  });
+});
+window.aronaMenu.onStateUpdate(state => {
+  // A background voice refresh may finish after the menu has been reopened.
+  if (panelWarp.phase === 'closed' || panelWarp.phase === 'closing') return;
+  renderState(state);
+});
+window.aronaMenu.onCloseAnimation(generation => {
+  if (menuOpenGeneration !== generation) return;
+  saveViewState();
+  discardCapture();
+  panelWarp.close(() => window.aronaMenu.closeComplete(generation));
+});

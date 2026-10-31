@@ -1,11 +1,14 @@
 import './style.css';
 import { rectanglesFromAlpha } from './silhouette.mjs';
 import { buildIdleVmd, IDLE_FRAMES } from './idle-vmd.mjs';
+import { WALK_FRAMES, buildWalkingVmd, walkTravelSpeed } from './walk-vmd.mjs';
 import { EmotionController } from './emotions.mjs';
 import { makeWebAudioBuffer } from './pcm-playback.mjs';
 import { LipSyncController, mouthLevelFromSamples } from './lip-sync.mjs';
 import { SpeechPlaybackQueue } from './speech-queue.mjs';
 import { approachZoom, fovForZoom } from './camera-zoom.mjs';
+import { DigitalBodyWarp, shouldAnimateMotionWarp, remainingWarpHoldMs } from './digital-body-warp.mjs';
+import { BLEND_FRAMES, chooseMotionTransition, blendSpanParameters } from './motion-blend.mjs';
 import { Engine } from '@babylonjs/core/Engines/engine';
 import { Scene } from '@babylonjs/core/scene';
 import { ArcRotateCamera } from '@babylonjs/core/Cameras/arcRotateCamera';
@@ -21,13 +24,17 @@ import { MmdStandardMaterialBuilder } from 'babylon-mmd/esm/Loader/mmdStandardMa
 import { MmdRuntime } from 'babylon-mmd/esm/Runtime/mmdRuntime';
 import { VmdLoader } from 'babylon-mmd/esm/Loader/vmdLoader';
 import { RegisterMmdRuntimeModelAnimation } from 'babylon-mmd/esm/Runtime/Animation/mmdRuntimeModelAnimation.pure';
+import { MmdCompositeAnimation, MmdAnimationSpan } from 'babylon-mmd/esm/Runtime/Animation/mmdCompositeAnimation';
+import { RegisterMmdCompositeRuntimeModelAnimation } from 'babylon-mmd/esm/Runtime/Animation/mmdCompositeRuntimeModelAnimation.pure';
 
 RegisterPmxLoader();
 RegisterPmdLoader();
 RegisterMmdOutlineRenderer();
 RegisterMmdRuntimeModelAnimation();
+RegisterMmdCompositeRuntimeModelAnimation();
 
 const canvas = document.getElementById('avatar-canvas');
+const bodyWarp = new DigitalBodyWarp(canvas, document.getElementById('digital-warp-canvas'));
 const status = document.getElementById('status');
 const placeholder = document.getElementById('placeholder');
 const chooseButton = document.getElementById('choose-model');
@@ -78,8 +85,16 @@ let idleInfo = '待機モーションの読込待ち';
 let observedFrameTime = 0;
 let idlePlaybackCheckTimer = null;
 let idleAnimationHandle = null;
+let currentMotionHandle = null;
+let currentMotionAnimation = null;
+let idleSourceAnimation = null;
+let motionTransitionMode = 'auto';
+let motionWarpEnabled = true;
+let exitWarpStarted = false;
 let customIdleMotion = null;
 let activeImportedMotion = null;
+let walkingMotion = null;
+let cachedWalkAnimations = new Map();
 let motionRequestId = 0;
 let motionTransitionQueue = Promise.resolve();
 let isChangingMotion = false;
@@ -369,7 +384,12 @@ async function attachIdleMotion(container) {
 
     const handle = runtimeModel.createRuntimeAnimation(animation);
     runtimeModel.setRuntimeAnimation(handle);
-    if (activeContainer === container) idleAnimationHandle = handle;
+    if (activeContainer === container) {
+      idleAnimationHandle = handle;
+      currentMotionHandle = handle;
+      currentMotionAnimation = animation;
+      idleSourceAnimation = animation;
+    }
     mmdRuntime.setManualAnimationDuration(IDLE_FRAMES);
     await mmdRuntime.seekAnimation(0, true);
     await mmdRuntime.playAnimation();
@@ -396,29 +416,162 @@ function queueMotionTransition(callback) {
   return pending;
 }
 
-function returnToIdle(requestId, message) {
+// The outgoing VMD keeps moving during disappearance. Once invisible we seek
+// the incoming VMD to frame zero, then reveal it while it is playing.
+// The same-motion idle loop never invokes this transfer.
+async function switchMotionWithWarp(requestId, model, change, animate = true) {
+  const canAnimate = shouldAnimateMotionWarp({
+    animate: animate && !exitWarpStarted,
+    enabled: motionWarpEnabled,
+    available: bodyWarp.enabled,
+    placeholderHidden: placeholder.hidden
+  });
+  if (canAnimate) await bodyWarp.conceal();
+  if (requestId !== motionRequestId || model !== activeMmdModel || exitWarpStarted) {
+    if (canAnimate && !exitWarpStarted) bodyWarp.cancel();
+    return false;
+  }
+  const completelyHiddenAt = performance.now();
+  try {
+    if (canAnimate) {
+      // Keep the *old* pose hidden for one second before starting the next
+      // animation, so its opening frames overlap the reappearance itself.
+      const remaining = remainingWarpHoldMs(completelyHiddenAt, performance.now());
+      if (remaining > 0) await new Promise(resolve => setTimeout(resolve, remaining));
+      if (requestId !== motionRequestId || model !== activeMmdModel || exitWarpStarted) return false;
+    }
+    // Switching at the end of the hold means we do not lose the incoming
+    // clip's first second while its owner is still invisible.
+    await change();
+    if (canAnimate && requestId === motionRequestId &&
+        model === activeMmdModel && !exitWarpStarted) {
+      await bodyWarp.reveal();
+    }
+    return true;
+  } finally {
+    // A quit transition may have taken ownership of the overlay. Do not
+    // accidentally cancel its disappearance when an old VMD request finishes.
+    if (canAnimate && !exitWarpStarted) bodyWarp.cancel();
+  }
+}
+
+// A composite is short-lived: blend the current VMD at its current frame into
+// the next VMD's first 12 frames. Afterwards bind the target's own runtime
+// animation at frame 12 so playback continues without restarting.
+async function switchMotionWithBlend(requestId, model, targetAnimation, change) {
+  const source = currentMotionAnimation;
+  const oldHandle = currentMotionHandle;
+  const oldFrame = mmdRuntime.currentFrameTime;
+  const oldDuration = activeImportedMotion?.endFrame ??
+    walkingMotion?.endFrame ?? customIdleMotion?.endFrame ?? IDLE_FRAMES;
+  const spanParams = blendSpanParameters(oldFrame);
+  let compositeHandle = null;
+  let blendReady = false;
+  try {
+    const composite = new MmdCompositeAnimation('FRAME crossfade');
+    const outgoing = new MmdAnimationSpan(
+      source, spanParams.outgoing.start, spanParams.outgoing.end, spanParams.outgoing.offset);
+    outgoing.easeOutFrameTime = BLEND_FRAMES;
+    const incoming = new MmdAnimationSpan(
+      targetAnimation, spanParams.incoming.start, spanParams.incoming.end, spanParams.incoming.offset);
+    incoming.easeInFrameTime = BLEND_FRAMES;
+    composite.addSpan(outgoing);
+    composite.addSpan(incoming);
+
+    compositeHandle = model.createRuntimeAnimation(composite);
+    model.setRuntimeAnimation(compositeHandle);
+    mmdRuntime.setManualAnimationDuration(BLEND_FRAMES);
+    await mmdRuntime.seekAnimation(0, true);
+    await mmdRuntime.playAnimation();
+
+    const deadline = performance.now() + 1500;
+    while (mmdRuntime.currentFrameTime < BLEND_FRAMES - 0.5 &&
+           performance.now() < deadline &&
+           model === activeMmdModel && !exitWarpStarted) {
+      // Wall-clock polling also completes if the OS throttles animation frames.
+      await new Promise(resolve => setTimeout(resolve, 16));
+    }
+    blendReady = model === activeMmdModel && !exitWarpStarted &&
+      mmdRuntime.currentFrameTime >= BLEND_FRAMES - 0.5;
+    if (blendReady) {
+      // Current animation now shows the incoming pose at the blend boundary.
+      await change(BLEND_FRAMES);
+      console.info('[FRAME motion] composite crossfade completed');
+      return true;
+    }
+    console.warn('[FRAME motion] blend interrupted/timed out; using digital transfer');
+  } catch (error) {
+    console.warn('[FRAME motion] composite unavailable; using digital transfer', error);
+  } finally {
+    if (!blendReady && model === activeMmdModel && oldHandle && !exitWarpStarted) {
+      try {
+        model.setRuntimeAnimation(oldHandle);
+        mmdRuntime.setManualAnimationDuration(oldDuration);
+        await mmdRuntime.seekAnimation(Math.min(oldFrame, oldDuration - 1), true);
+        await mmdRuntime.playAnimation();
+      } catch (error) {
+        console.warn('[FRAME motion] unable to restore source clip', error);
+      }
+    }
+    if (compositeHandle && model === activeMmdModel) {
+      model.destroyRuntimeAnimation(compositeHandle);
+    }
+  }
+  return false;
+}
+
+async function switchMotionWithPolicy(
+  requestId, model, targetAnimation, change, { animate = true, automaticReturn = false } = {}
+) {
+  const currentFrame = mmdRuntime.currentFrameTime;
+  const choice = chooseMotionTransition({
+    mode: motionTransitionMode,
+    fromAnimation: currentMotionAnimation,
+    toAnimation: targetAnimation,
+    fromFrame: currentFrame,
+    fromEndFrame: currentMotionAnimation?.endFrame,
+    toEndFrame: targetAnimation?.endFrame,
+    isAutomaticReturn: automaticReturn
+  });
+  console.info('[FRAME motion] transition', { requested: motionTransitionMode, chosen: choice.method, reason: choice.reason, similarity: choice.similarity });
+  if (animate && !exitWarpStarted && choice.method === 'blend') {
+    if (await switchMotionWithBlend(requestId, model, targetAnimation, change)) return;
+  }
+  await switchMotionWithWarp(requestId, model, () => change(0), animate);
+}
+
+function returnToIdle(requestId, message, automaticReturn = false) {
   return queueMotionTransition(async () => {
     if (requestId !== motionRequestId || !activeMmdModel || !idleAnimationHandle) return;
     const model = activeMmdModel;
     const previous = activeImportedMotion;
-    const target = customIdleMotion || { handle: idleAnimationHandle, endFrame: IDLE_FRAMES };
+    const target = customIdleMotion ||
+      { handle: idleAnimationHandle, animation: idleSourceAnimation, endFrame: IDLE_FRAMES };
+    if (currentMotionHandle === target.handle && !previous) {
+      reportIdle(message);
+      return;
+    }
     isChangingMotion = true;
     try {
-      model.setRuntimeAnimation(target.handle);
-      mmdRuntime.setManualAnimationDuration(target.endFrame);
-      await mmdRuntime.seekAnimation(0, true);
-      if (model !== activeMmdModel) return;
-      await mmdRuntime.playAnimation();
-      activeImportedMotion = null;
-      if (previous) model.destroyRuntimeAnimation(previous.handle);
-      reportIdle(message);
+      await switchMotionWithPolicy(requestId, model, target.animation, async (startFrame) => {
+        model.setRuntimeAnimation(target.handle);
+        currentMotionHandle = target.handle;
+        currentMotionAnimation = target.animation;
+        mmdRuntime.setManualAnimationDuration(target.endFrame);
+        await mmdRuntime.seekAnimation(startFrame, true);
+        if (model !== activeMmdModel) return;
+        await mmdRuntime.playAnimation();
+        activeImportedMotion = null;
+        if (previous) model.destroyRuntimeAnimation(previous.handle);
+        reportIdle(message);
+      }, { automaticReturn });
     } finally {
       isChangingMotion = false;
     }
   });
 }
 
-async function playImportedMotion({ name, bytes }, asIdle = false) {
+async function playImportedMotion({ name, bytes }, asIdle = false, animate = true) {
   const requestId = ++motionRequestId;
   const model = activeMmdModel;
   if (!model || !idleAnimationHandle) {
@@ -458,27 +611,34 @@ async function playImportedMotion({ name, bytes }, asIdle = false) {
       isChangingMotion = true;
       try {
         handle = model.createRuntimeAnimation(animation);
-        model.setRuntimeAnimation(handle);
-        if (asIdle) {
-          customIdleMotion = { handle, name, endFrame };
-          activeImportedMotion = null;
-        } else {
-          activeImportedMotion = { handle, name, endFrame };
-        }
-        mmdRuntime.setManualAnimationDuration(endFrame);
-        await mmdRuntime.seekAnimation(0, true);
-        if (model !== activeMmdModel) return;
-        await mmdRuntime.playAnimation();
-        if (previous) model.destroyRuntimeAnimation(previous.handle);
-        if (asIdle && formerIdle) model.destroyRuntimeAnimation(formerIdle.handle);
-        reportIdle((asIdle ? 'カスタム待機モーション: ' : '外部VMD再生中: ') + name +
-          '\n対応ボーン: ' + boneMatches + ' / 対応モーフ: ' + morphMatches +
-          '\n終端フレーム: ' + endFrame);
+        await switchMotionWithPolicy(requestId, model, animation, async (startFrame) => {
+          model.setRuntimeAnimation(handle);
+          currentMotionHandle = handle;
+          currentMotionAnimation = animation;
+          if (asIdle) {
+            customIdleMotion = { handle, animation, name, endFrame };
+            activeImportedMotion = null;
+          } else {
+            activeImportedMotion = { handle, animation, name, endFrame };
+          }
+          mmdRuntime.setManualAnimationDuration(endFrame);
+          await mmdRuntime.seekAnimation(startFrame, true);
+          if (model !== activeMmdModel) return;
+          await mmdRuntime.playAnimation();
+          if (previous) model.destroyRuntimeAnimation(previous.handle);
+          if (asIdle && formerIdle) model.destroyRuntimeAnimation(formerIdle.handle);
+          reportIdle((asIdle ? 'カスタム待機モーション: ' : '外部VMD再生中: ') + name +
+            '\n対応ボーン: ' + boneMatches + ' / 対応モーフ: ' + morphMatches +
+            '\n終端フレーム: ' + endFrame);
+        }, { animate });
       } catch (error) {
         if (model === activeMmdModel && idleAnimationHandle) {
           try {
-            const target = formerIdle || { handle: idleAnimationHandle, endFrame: IDLE_FRAMES };
+            const target = formerIdle ||
+              { handle: idleAnimationHandle, animation: idleSourceAnimation, endFrame: IDLE_FRAMES };
             model.setRuntimeAnimation(target.handle);
+            currentMotionHandle = target.handle;
+            currentMotionAnimation = target.animation;
             mmdRuntime.setManualAnimationDuration(target.endFrame);
             await mmdRuntime.seekAnimation(0, true);
             await mmdRuntime.playAnimation();
@@ -503,7 +663,109 @@ async function playImportedMotion({ name, bytes }, asIdle = false) {
   }
 }
 
+// Stop native travel before any other VMD transition begins. The walk VMD
+// handle stays cached, so switching away and back does not repeatedly parse it.
+function stopWalkingWithoutRestore() {
+  window.aronaDesktop.setWalkVelocity(0, 0);
+  walkingMotion = null;
+}
+
+async function startWalking(direction) {
+  if (![-1, 1].includes(direction) || !activeMmdModel || !activeRoot ||
+      !idleAnimationHandle || exitWarpStarted) {
+    reportIdle('歩行を開始できません: モデルと足IKを確認してください');
+    return;
+  }
+  if (walkingMotion?.direction === direction) return;
+  stopWalkingWithoutRestore();
+  const model = activeMmdModel;
+  const requestId = ++motionRequestId;
+  await queueMotionTransition(async () => {
+    if (requestId !== motionRequestId || model !== activeMmdModel || exitWarpStarted) return;
+    const previous = activeImportedMotion;
+    isChangingMotion = true;
+    try {
+      let cached = cachedWalkAnimations.get(direction);
+      if (!cached) {
+        const bounds = activeRoot.getHierarchyBoundingVectors(true);
+        const height = bounds.max.y - bounds.min.y;
+        const created = buildWalkingVmd({
+          boneNames: model.runtimeBones.map(bone => bone.name),
+          modelHeight: height,
+          direction
+        });
+        const animation = await idleLoader.loadFromBufferAsync(
+          direction < 0 ? 'FRAME Walk Left' : 'FRAME Walk Right', created.buffer);
+        if (requestId !== motionRequestId || model !== activeMmdModel || exitWarpStarted) return;
+        const handle = model.createRuntimeAnimation(animation);
+        cached = { handle, animation, stride: created.stride, endFrame: WALK_FRAMES };
+        cachedWalkAnimations.set(direction, cached);
+      }
+      // The screen width is measured in Electron DIP, not MMD world units.
+      // Match walking distance to the stance phase of the foot-IK tracks.
+      const worldHeight = 2 * camera.radius * Math.tan(camera.fov / 2);
+      const pixelsPerUnit = window.innerHeight / Math.max(worldHeight, 0.01);
+      const speed = Math.min(300, Math.max(25,
+        walkTravelSpeed(cached.stride, pixelsPerUnit)));
+      await switchMotionWithPolicy(requestId, model, cached.animation, async startFrame => {
+        if (requestId !== motionRequestId || model !== activeMmdModel || exitWarpStarted) return;
+        model.setRuntimeAnimation(cached.handle);
+        currentMotionHandle = cached.handle;
+        currentMotionAnimation = cached.animation;
+        mmdRuntime.setManualAnimationDuration(cached.endFrame);
+        await mmdRuntime.seekAnimation(startFrame, true);
+        if (requestId !== motionRequestId || model !== activeMmdModel || exitWarpStarted) return;
+        await mmdRuntime.playAnimation();
+        activeImportedMotion = null;
+        walkingMotion = { ...cached, direction };
+        if (previous) model.destroyRuntimeAnimation(previous.handle);
+        window.aronaDesktop.setWalkVelocity(direction, speed);
+        reportIdle(direction < 0 ? '左へ歩行中（足IK同期）' : '右へ歩行中（足IK同期）');
+      });
+    } catch (error) {
+      stopWalkingWithoutRestore();
+      if (requestId === motionRequestId && model === activeMmdModel) {
+        reportIdle('歩行を開始できません: ' + String(error?.message ?? error));
+        const target = customIdleMotion ||
+          { handle: idleAnimationHandle, animation: idleSourceAnimation, endFrame: IDLE_FRAMES };
+        try {
+          model.setRuntimeAnimation(target.handle);
+          currentMotionHandle = target.handle;
+          currentMotionAnimation = target.animation;
+          mmdRuntime.setManualAnimationDuration(target.endFrame);
+          await mmdRuntime.seekAnimation(0, true);
+          await mmdRuntime.playAnimation();
+          activeImportedMotion = null;
+          if (previous) model.destroyRuntimeAnimation(previous.handle);
+        } catch (restoreError) {
+          console.warn('[FRAME walk] unable to restore idle', restoreError);
+        }
+      }
+    } finally {
+      isChangingMotion = false;
+    }
+  });
+}
+
+function stopWalkingAndRestore() {
+  // Also invalidate a walk that is still being prepared or transferred.
+  // The queued idle restore wins over a pending start in either case.
+  stopWalkingWithoutRestore();
+  const requestId = ++motionRequestId;
+  void returnToIdle(requestId, '歩行停止: 待機モーションに戻りました')
+    .catch(error => reportIdle('歩行停止に失敗: ' + String(error?.message ?? error)));
+}
+
 function onMotionCommand(command) {
+  if (command?.type === 'walk') {
+    void startWalking(command.direction);
+    return;
+  }
+  if (command?.type === 'walk-stop') {
+    stopWalkingAndRestore();
+    return;
+  }
+  if (walkingMotion) stopWalkingWithoutRestore();
   if (command?.type === 'play') {
     void playImportedMotion(command);
   } else if (command?.type === 'idle') {
@@ -525,10 +787,16 @@ function onMotionCommand(command) {
   }
 }
 
-async function loadModel(model) {
+const STARTUP_APPEAR_MS = 2000;
+
+async function loadModel(model, { startup = false } = {}) {
   if (!model) return;
   const seq = ++loadSequence;
   chooseButton.disabled = true;
+  motionWarpEnabled = model.motionWarpEnabled !== false;
+  const revealOnStartup = startup && motionWarpEnabled && bodyWarp.enabled && !exitWarpStarted;
+  motionTransitionMode = ['auto', 'blend', 'warp'].includes(model.motionTransitionMode)
+    ? model.motionTransitionMode : 'auto';
   showStatus('読み込み中: ' + model.name);
   reportIdle('モデルを読み込み中: ' + model.name);
   let nextContainer;
@@ -559,8 +827,16 @@ async function loadModel(model) {
     const oldContainer = activeContainer;
     const oldMmdModel = activeMmdModel;
     ++motionRequestId; // Invalidate pending VMD parses and transitions.
+    if (revealOnStartup) bodyWarp.holdHidden();
+    else bodyWarp.cancel();
     activeImportedMotion = null;
+    walkingMotion = null;
+    cachedWalkAnimations = new Map();
+    window.aronaDesktop.setWalkVelocity(0, 0);
     idleAnimationHandle = null;
+    idleSourceAnimation = null;
+    currentMotionHandle = null;
+    currentMotionAnimation = null;
     customIdleMotion = null;
     if (emotionController) {
       emotionController.dispose();
@@ -622,17 +898,24 @@ async function loadModel(model) {
     }
     placeholder.hidden = true;
     regionDirty = true;
+    // First model appearance uses the existing cyan transfer, extended to
+    // two seconds. Manual model selection and motion switching stay fast.
+    if (revealOnStartup && bodyWarp.phase === 'hidden') {
+      void bodyWarp.reveal(STARTUP_APPEAR_MS);
+    }
     // Restore the saved local idle clip after the runtime and its generated
     // fallback have been initialized. Missing files leave the fallback active.
     const restoreAfterRequest = motionRequestId;
     void window.aronaDesktop.restoreIdleMotion().then(motion => {
       // A manual preview or idle selection made during restore wins.
       if (seq === loadSequence && restoreAfterRequest === motionRequestId && motion) {
-        return playImportedMotion(motion, true);
+        return playImportedMotion(motion, true, false);
       }
     }).catch(error => console.warn('[CORE motion] idle restore failed:', error));
   } catch (error) {
     if (seq === loadSequence) {
+      // Never strand the canvas at 0% opacity if startup loading fails.
+      if (revealOnStartup) bodyWarp.cancel();
       console.error('Failed to load MMD model:', error);
       const message = error instanceof Error ? error.message : String(error);
       showStatus('読み込めませんでした: ' + message);
@@ -725,6 +1008,35 @@ window.aronaDesktop.onCameraZoom(factor => {
 });
 window.aronaDesktop.onEmotionChange(setEmotion);
 window.aronaDesktop.onMotionCommand(onMotionCommand);
+window.aronaDesktop.onWalkStopped(() => {
+  if (walkingMotion) stopWalkingAndRestore();
+});
+window.aronaDesktop.onPrepareQuit(() => {
+  if (exitWarpStarted) return;
+  exitWarpStarted = true;
+  window.aronaDesktop.setWalkVelocity(0, 0);
+  ++motionRequestId;
+  bodyWarp.cancel();
+  void (async () => {
+    try {
+      // Exit is disappearance only. Do not wait 1s or reveal the body again.
+      if (motionWarpEnabled && bodyWarp.enabled && placeholder.hidden) {
+        await bodyWarp.conceal();
+      }
+    } catch (error) {
+      console.warn('[FRAME warp] exit concealment failed:', error);
+    } finally {
+      window.aronaDesktop.quitReady();
+    }
+  })();
+});
+window.aronaDesktop.onMotionWarpEnabled(enabled => {
+  motionWarpEnabled = enabled !== false;
+  if (!motionWarpEnabled) bodyWarp.cancel();
+});
+window.aronaDesktop.onMotionTransitionMode(mode => {
+  if (['auto', 'blend', 'warp'].includes(mode)) motionTransitionMode = mode;
+});
 window.aronaDesktop.onVoiceTest(() => speakLatest('先生、こんにちは！ コア・アロナ・デスクトップから、お話ししています。'));
 window.aronaDesktop.onVoiceText(text => { void speakLatest(text); });
 window.aronaDesktop.onVoiceStop(stopSpeech);
@@ -751,15 +1063,17 @@ scene.onBeforeRenderObservable.add(() => {
 
 engine.runRenderLoop(() => {
   scene.render();
+  bodyWarp.render(performance.now());
   if (activeMmdModel && !isChangingMotion && !isSeekingIdleLoop) {
-    const endFrame = activeImportedMotion?.endFrame ?? customIdleMotion?.endFrame ?? IDLE_FRAMES;
+    const endFrame = activeImportedMotion?.endFrame ??
+      walkingMotion?.endFrame ?? customIdleMotion?.endFrame ?? IDLE_FRAMES;
     if (mmdRuntime.currentFrameTime >= endFrame - 1) {
       isSeekingIdleLoop = true;
       if (activeImportedMotion) {
         const finished = activeImportedMotion.name;
         const requestId = ++motionRequestId;
         void returnToIdle(requestId, '外部VMD再生完了: ' + finished +
-          '\n待機モーションに戻りました')
+          '\n待機モーションに戻りました', true)
           .catch(error => reportIdle('待機への復帰に失敗: ' + String(error?.message ?? error)))
           .finally(() => { isSeekingIdleLoop = false; });
       } else {
@@ -783,7 +1097,7 @@ engine.runRenderLoop(() => {
 window.addEventListener('resize', () => { engine.resize(); regionDirty = true; });
 
 window.aronaDesktop.currentModel()
-  .then(model => { if (model) return loadModel(model); })
+  .then(model => { if (model) return loadModel(model, { startup: true }); })
   .catch(error => {
     console.error(error);
     showStatus('前回のモデルを復元できませんでした');
