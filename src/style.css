@@ -52,9 +52,11 @@ button {
   color: #f5f5f7; font: inherit; font-weight: 550;
   cursor: pointer;
 }
-button:first-child { background: #0071e3; color: #fff; border-color: #0071e3; }
+button:first-child { background: rgba(41,151,255,.16); color: #dceeff; border-color: rgba(91,167,239,.46); }
 button:hover:not(:disabled) { background: #49494e; }
-button:first-child:hover:not(:disabled) { background: #1684f6; }
+button:first-child:hover:not(:disabled) { background: rgba(41,151,255,.25); border-color: rgba(113,189,255,.7); }
+#quit-app { background: rgba(255,89,90,.065); color: #ff7777; border-color: rgba(255,89,90,.21); }
+#quit-app:hover:not(:disabled) { background: rgba(255,89,90,.14); border-color: rgba(255,89,90,.39); }
 button:focus-visible { outline: 2px solid #2997ff; outline-offset: 2px; }
 button:disabled { opacity: .55; cursor: progress; }
 
