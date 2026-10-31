@@ -65,6 +65,9 @@ function rig({ hostname = 'chatgpt.com', text = '', existingFile = false,
         return sendButton;
       }
       return null;
+    },
+    querySelectorAll(selector) {
+      return selector === 'img' ? form.querySelectorAll('img') : [];
     }
   };
   const editor = {
