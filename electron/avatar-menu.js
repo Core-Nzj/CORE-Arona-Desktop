@@ -37,6 +37,9 @@ let busy = false;
 function message(value, error = false) {
   feedback.textContent = value;
   feedback.classList.toggle('error', error);
+  const pulse = document.querySelector('footer .pulse');
+  pulse.classList.toggle('error', error);
+  pulse.classList.toggle('pending', !error && /処理しています|確認中/.test(String(value)));
 }
 // The prewarmed popup stays alive between opens. The Electron main process
 // retains its navigation position in memory and resets it when FRAME exits.
@@ -181,8 +184,11 @@ function renderState(state) {
   motionList.scrollTop = priorScroll;
   const activeButton = motionList.querySelector('.motion-option.selected');
   if (activeButton) activeButton.scrollIntoView({ block: 'nearest' });
-  document.getElementById('voice-status').textContent = state.voiceStatus || '未接続';
-  document.getElementById('voice-light').classList.toggle('online', !!state.voiceReady);
+  const voiceStatus = state.voiceStatus || '未接続';
+  document.getElementById('voice-status').textContent = voiceStatus;
+  const voiceLight = document.getElementById('voice-light');
+  voiceLight.classList.toggle('online', !!state.voiceReady);
+  voiceLight.classList.toggle('error', !state.voiceReady && /エラー|失敗|異常|拒否|401|unauthorized|timeout/i.test(voiceStatus));
   const app = state.voisona || {};
   const engineStatus = !app.supported ? 'Windowsのみ対応' :
     app.running ? (!app.hasWindow ? '起動中・メイン画面未検出（操作を保留）' :
@@ -190,7 +196,9 @@ function renderState(state) {
       (app.visible ? '・表示中)' : '・非表示)')) :
       (app.error ? '未起動: ' + app.error : '停止中');
   document.getElementById('voisona-status').textContent = engineStatus;
-  document.getElementById('voisona-light').classList.toggle('online', !!app.running);
+  const engineLight = document.getElementById('voisona-light');
+  engineLight.classList.toggle('online', !!app.running && !!app.hasWindow);
+  engineLight.classList.toggle('error', !!app.error || (!!app.running && !app.hasWindow));
   document.getElementById('voisona-autostart').textContent = '自動起動 ' + (app.autoStart ? 'ON' : 'OFF');
   document.getElementById('voisona-autohide').textContent = '自動非表示 ' + (app.autoHide ? 'ON' : 'OFF');
   document.getElementById('voisona-autostart').setAttribute('aria-pressed', String(!!app.autoStart));
