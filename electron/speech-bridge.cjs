@@ -121,8 +121,14 @@ class SpeechBridge {
   }
 
   close() {
-    if (this.server) this.server.close();
+    const server = this.server;
     this.server = null;
+    if (!server) return;
+    // Do not leave authenticated localhost sockets alive after shutdown.
+    // Undici/fetch may reuse idle sockets between tests on Windows.
+    server.close();
+    server.closeIdleConnections?.();
+    server.closeAllConnections?.();
   }
 }
 
