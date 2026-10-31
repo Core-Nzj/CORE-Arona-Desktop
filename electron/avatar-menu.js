@@ -39,6 +39,8 @@ let captureBusy = false;
 let lastCaptureRequest = null;
 let lastPluginError = '';
 let currentState = null;
+let shareConsentRequestId = null;
+let shareConsentChecked = false;
 
 function message(value, error = false) {
   feedback.textContent = value;
@@ -344,6 +346,7 @@ function renderState(state) {
   errorBox.textContent = lastPluginError;
 
   const preview = plugins.capture || null;
+  updateVisionSharePanel(preview, state.visionShare);
   const previewElement = document.getElementById('plugin-preview');
   previewElement.hidden = !preview;
   document.getElementById('plugin-clear').disabled = captureBusy || !preview;
@@ -425,9 +428,72 @@ function closePreviewLightbox(restoreFocus = true) {
   }
 }
 
+
+function updateVisionSharePanel(preview, share) {
+  const card = document.getElementById('vision-share');
+  card.hidden = !preview;
+  const session = share?.session || null;
+  if (shareConsentRequestId !== (session?.requestId ?? null)) {
+    shareConsentRequestId = session?.requestId ?? null;
+    shareConsentChecked = false; // A new capture never inherits approval.
+  }
+  const expiresIn = Number(session?.expiresAt) - Date.now();
+  const canSend = !!preview && session?.status === 'captured' && expiresIn > 0;
+  const checkbox = document.getElementById('vision-share-consent');
+  if (!canSend) shareConsentChecked = false;
+  checkbox.disabled = !canSend || busy;
+  checkbox.checked = canSend && shareConsentChecked;
+
+  const status = document.getElementById('vision-share-status');
+  const labels = {
+    captured: '確認待ち', approved: '許可済み', delivering: '受領確認中',
+    delivered: 'ローカル受領済み', revoked: '取り消し済み',
+    expired: '期限切れ', failed: '受け渡し失敗'
+  };
+  status.textContent = session?.status === 'captured' && expiresIn <= 0
+    ? '期限切れ' : (labels[session?.status] || '未準備');
+  document.getElementById('vision-share-target').textContent =
+    preview ? (preview.title || '選択されたウィンドウ') +
+      ' / ' + preview.width + ' × ' + preview.height : '';
+  document.getElementById('vision-share-destination').textContent =
+    share?.destination?.label || '受信先なし';
+  const ttl = document.getElementById('vision-share-expiry');
+  ttl.textContent = canSend
+    ? '有効期限まで残り ' + Math.ceil(expiresIn / 1000) + ' 秒（再撮影すると更新）'
+    : (session?.status === 'delivered'
+      ? '1回の受け渡しが完了しました。次回は再撮影が必要です。'
+      : 'この画像の受け渡しには再撮影が必要です。');
+  const send = document.getElementById('vision-share-send');
+  send.disabled = !canSend || !shareConsentChecked || busy;
+  if (!send.disabled) {
+    send.dataset.value = JSON.stringify({
+      requestId: session.requestId,
+      destinationId: share.destination.destinationId,
+      userConfirmed: true
+    });
+  } else {
+    delete send.dataset.value;
+  }
+  document.getElementById('vision-share-revoke').disabled =
+    busy || !session || !['captured', 'approved', 'delivering'].includes(session.status) ||
+    expiresIn <= 0;
+}
+document.getElementById('vision-share-consent').addEventListener('change', event => {
+  if (event.target.disabled) return;
+  shareConsentChecked = event.target.checked;
+  updateVisionSharePanel(currentState?.plugins?.capture, currentState?.visionShare);
+});
+// Update the countdown without re-rendering window lists or captured PNGs.
+setInterval(() => {
+  if (!currentState || panelWarp.phase === 'closed' || panelWarp.phase === 'closing') return;
+  updateVisionSharePanel(currentState.plugins?.capture, currentState.visionShare);
+}, 1000);
+
 function discardCapture() {
   lastCaptureRequest = null;
   lastPluginError = '';
+  shareConsentRequestId = null;
+  shareConsentChecked = false;
   closePreviewLightbox(false);
   if (currentState) {
     currentState = { ...currentState, plugins: { ...currentState.plugins, capture: null } };
@@ -442,7 +508,7 @@ const keepOpen = new Set([
   'motion.previous', 'motion.setIdle', 'motion.stop', 'motion.resetIdle', 'motion.warpToggle',
   'motion.transition',
   'plugin.folder', 'plugin.refresh', 'plugin.toggle', 'plugin.listWindows',
-  'plugin.captureWindow', 'plugin.clearCapture'
+  'plugin.captureWindow', 'plugin.clearCapture', 'vision.deliverLocal', 'vision.revoke'
 ]);
 
 async function runAction(action, value) {
@@ -461,7 +527,7 @@ async function runAction(action, value) {
       windowId: lastCaptureRequest.windowId
     });
   }
-  const isPlugin = action.startsWith('plugin.');
+  const isPlugin = action.startsWith('plugin.') || action.startsWith('vision.');
   busy = true;
   if (isPlugin) lastPluginError = '';
   if (action === 'plugin.captureWindow') {
